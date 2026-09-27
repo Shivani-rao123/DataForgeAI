@@ -67,61 +67,58 @@ export async function runWorkflow(prompt: string): Promise<RunResponse> {
 }
 
 /**
- * Connect to SSE stream for real-time pipeline updates.
- * Falls back to simulated events if backend doesn't support SSE yet.
+ * Connect to SSE stream for real-time pipeline progress.
+ *
+ * Uses the browser-native EventSource API for reliable SSE handling.
+ * Registers a listener for every known pipeline event and dispatches
+ * them to the caller.
+ *
+ * Returns a teardown function that closes the connection.
  */
 export function connectPipelineStream(
-  taskId: string,
+  prompt: string,
   onEvent: (event: string, data: Record<string, unknown>) => void,
   onComplete: () => void,
   onError: (error: Error) => void
 ): () => void {
-  const controller = new AbortController();
+  const url = `${API_BASE}/workflows/run/stream?prompt=${encodeURIComponent(prompt)}`;
+  const es = new EventSource(url);
 
-  fetch(`${API_BASE}/workflows/run/${taskId}/stream`, {
-    signal: controller.signal,
-  })
-    .then(async (res) => {
-      if (!res.ok || !res.body) {
-        throw new Error("SSE not available");
-      }
+  const knownEvents = [
+    "planner:start", "planner:done",
+    "discovery:start", "discovery:done",
+    "extraction:start", "extraction:done",
+    "critic:start", "critic:done",
+    "validator:start", "validator:done",
+    "pipeline:complete", "pipeline:error",
+  ];
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        let currentEvent = "";
-        for (const line of lines) {
-          if (line.startsWith("event: ")) {
-            currentEvent = line.slice(7).trim();
-          } else if (line.startsWith("data: ")) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              onEvent(currentEvent, data);
-              if (currentEvent === "pipeline:complete") {
-                onComplete();
-              }
-            } catch {
-              // skip malformed data
-            }
-          }
+  for (const eventName of knownEvents) {
+    es.addEventListener(eventName, ((e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data);
+        onEvent(eventName, data);
+        if (eventName === "pipeline:complete") {
+          onComplete();
+          es.close();
         }
+        if (eventName === "pipeline:error") {
+          onError(new Error(data.error || "Pipeline error"));
+          es.close();
+        }
+      } catch {
+        // skip malformed JSON
       }
-      onComplete();
-    })
-    .catch((err) => {
-      if (err.name !== "AbortError") {
-        onError(err);
-      }
-    });
+    }) as EventListener);
+  }
 
-  return () => controller.abort();
+  es.onerror = () => {
+    // EventSource auto-retries; only error on closed connections
+    if (es.readyState === EventSource.CLOSED) {
+      onError(new Error("SSE connection closed"));
+      es.close();
+    }
+  };
+
+  return () => es.close();
 }

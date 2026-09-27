@@ -17,8 +17,8 @@
   --accent-amber: #f59e0b;
 
   --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
-  --text-muted: #475569;
+  --text-secondary: #b0bec5;
+  --text-muted: #78909c;
 
   --glow-cyan: 0 0 20px rgba(0, 240, 255, 0.3);
   --glow-violet: 0 0 20px rgba(139, 92, 246, 0.3);
@@ -321,4 +321,135 @@ body {
 .react-flow__controls-button:hover {
   background: var(--bg-elevated) !important;
   fill: var(--accent-cyan) !important;
+}
+
+/* ── Agent Node Styles ── */
+.agent-node {
+  position: relative;
+  border-radius: 20px;
+  padding: 24px;
+  min-width: 260px;
+  background: var(--bg-card-solid);
+  border: 1px solid var(--border-subtle);
+  transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.agent-node.active {
+  border-color: rgba(0, 240, 255, 0.4);
+  box-shadow: 0 0 40px rgba(0, 240, 255, 0.12), 0 0 80px rgba(0, 240, 255, 0.05);
+}
+
+.agent-node.complete {
+  border-color: rgba(16, 185, 129, 0.35);
+  box-shadow: 0 0 30px rgba(16, 185, 129, 0.08);
+}
+
+.agent-node.error {
+  border-color: rgba(244, 63, 94, 0.35);
+  box-shadow: 0 0 30px rgba(244, 63, 94, 0.08);
+}
+
+/* ── Shimmer Reveal (Hero text) ── */
+@keyframes shimmer-reveal {
+  0% {
+    background-position: -200% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
+.shimmer-reveal {
+  background: linear-gradient(
+    90deg,
+    var(--accent-cyan) 0%,
+    var(--accent-violet) 25%,
+    #fff 50%,
+    var(--accent-violet) 75%,
+    var(--accent-cyan) 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmer-reveal 4s linear infinite;
+}
+
+/* ── Orb Glow (Pipeline preview) ── */
+@keyframes orb-breathe {
+  0%, 100% {
+    box-shadow: 0 0 12px rgba(0, 240, 255, 0.3);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 24px rgba(0, 240, 255, 0.6);
+    transform: scale(1.15);
+  }
+}
+
+.orb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent-cyan);
+  animation: orb-breathe 3s ease-in-out infinite;
+}
+
+.orb:nth-child(2) { animation-delay: 0.3s; background: #38bdf8; }
+.orb:nth-child(3) { animation-delay: 0.6s; background: var(--accent-violet); }
+.orb:nth-child(4) { animation-delay: 0.9s; background: var(--accent-amber); }
+.orb:nth-child(5) { animation-delay: 1.2s; background: var(--accent-emerald); }
+
+/* ── Edge Data Flow ── */
+@keyframes edge-flow {
+  0% { stroke-dashoffset: 20; }
+  100% { stroke-dashoffset: 0; }
+}
+
+.edge-active {
+  stroke-dasharray: 6 4;
+  animation: edge-flow 0.8s linear infinite;
+}
+
+/* ── Progress Bar (inside agent node) ── */
+@keyframes progress-fill {
+  0% { width: 0%; }
+  100% { width: 100%; }
+}
+
+.agent-progress {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+  margin-top: 12px;
+}
+
+.agent-progress-bar {
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent-cyan), var(--accent-violet));
+  transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ── Mesh Grid Background ── */
+.mesh-grid {
+  background-image:
+    linear-gradient(rgba(0, 240, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 240, 255, 0.03) 1px, transparent 1px);
+  background-size: 60px 60px;
+}
+
+/* ── Label Chip ── */
+.edge-label {
+  background: rgba(8, 8, 24, 0.9);
+  border: 1px solid rgba(0, 240, 255, 0.15);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
 }

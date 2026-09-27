@@ -7,37 +7,15 @@ import { ParticleField } from "@/components/shared/particle-field";
 import { AuroraBackground } from "@/components/shared/aurora-background";
 import { HeroSection } from "@/components/landing/hero-section";
 import { PromptInput } from "@/components/landing/prompt-input";
-import { runWorkflow } from "@/lib/api";
-import { useWorkflowStore } from "@/hooks/use-workflow-state";
 
 export default function HomePage() {
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
-  const store = useWorkflowStore();
 
-  const handleSubmit = async (prompt: string) => {
+  const handleSubmit = (prompt: string) => {
     setIsLoading(true);
-    store.setPrompt(prompt);
-
-    try {
-      const result = await runWorkflow(prompt);
-
-      // Populate store with the full pipeline result
-      store.setSpec(result.spec);
-      store.setResolvedSpec(result.resolved_spec);
-      store.setExtractionResults(result.extraction_results);
-      store.setValidatedResult(result.validated_result);
-      store.setRecordCount(result.validated_result.clean_records.length);
-      if (result.task_id) store.setTaskId(result.task_id);
-
-      // Navigate to workflow view
-      router.push("/workflow");
-    } catch (err) {
-      store.setError(
-        err instanceof Error ? err.message : "Pipeline failed"
-      );
-      setIsLoading(false);
-    }
+    // Navigate immediately — the workflow page connects to the SSE stream
+    router.push(`/workflow?prompt=${encodeURIComponent(prompt)}`);
   };
 
   return (

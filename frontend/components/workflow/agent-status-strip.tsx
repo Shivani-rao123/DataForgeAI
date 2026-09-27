@@ -64,7 +64,7 @@ export function AgentStatusStrip() {
                   isActive && "text-cyan",
                   isComplete && "text-emerald",
                   agentStage === "error" && "text-rose",
-                  agentStage === "idle" && "text-text-muted"
+                  agentStage === "idle" && "text-text-secondary"
                 )}
               />
               <span
@@ -72,7 +72,7 @@ export function AgentStatusStrip() {
                   "text-xs font-medium transition-colors duration-300",
                   isActive && "text-cyan",
                   isComplete && "text-emerald",
-                  agentStage === "idle" && "text-text-muted"
+                  agentStage === "idle" && "text-text-secondary"
                 )}
               >
                 {agent.label}

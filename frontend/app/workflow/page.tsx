@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState, useRef, useCallback } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, Download, Copy, Check, ExternalLink } from "lucide-react";
 import { PipelineGraph } from "@/components/workflow/pipeline-graph";
@@ -10,21 +10,33 @@ import { AgentStatusStrip } from "@/components/workflow/agent-status-strip";
 import { GradientText } from "@/components/shared/gradient-text";
 import { AnimatedCounter } from "@/components/shared/animated-counter";
 import { useWorkflowStore } from "@/hooks/use-workflow-state";
+import { connectPipelineStream } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import type { WorkflowSpec, ResolvedWorkflowSpec, SourceExtractionResult, ValidatedResult } from "@/lib/types";
 
 export default function WorkflowPage() {
+  return (
+    <Suspense>
+      <WorkflowPageInner />
+    </Suspense>
+  );
+}
+
+function WorkflowPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const prompt = searchParams.get("prompt") || "";
   const store = useWorkflowStore();
   const [showResults, setShowResults] = useState(false);
   const [copied, setCopied] = useState(false);
-  const hasSimulated = useRef(false);
+  const abortRef = useRef<(() => void) | null>(null);
 
-  // Redirect if no data
+  // Redirect if no prompt in URL
   useEffect(() => {
-    if (!store.spec && store.stage === "idle") {
+    if (!prompt) {
       router.push("/");
     }
-  }, [store.spec, store.stage, router]);
+  }, [prompt, router]);
 
   // Show results after pipeline completes
   useEffect(() => {
@@ -33,138 +45,104 @@ export default function WorkflowPage() {
     }
   }, [store.stage]);
 
-  // Simulate pipeline progression from stored data
-  useEffect(() => {
-    if (!store.spec || hasSimulated.current) return;
-    hasSimulated.current = true;
-
-    const simulateProgress = async () => {
-      // Stage 1: Planning
-      store.setStage("planning");
-      store.setProgress(10);
-      store.addLog({
-        stage: "planning",
-        agent: "Planner",
-        message: `Generated workflow spec with ${store.spec?.sources.length || 0} sources`,
-        level: "success",
-      });
-
-      await delay(800);
-
-      // Stage 2: Discovery
-      store.setStage("discovering");
-      store.setProgress(25);
-      const totalUrls =
-        store.resolvedSpec?.sources.reduce(
-          (acc, s) => acc + (s.resolved?.length || 0),
-          0
-        ) || 0;
-      store.addLog({
-        stage: "discovering",
-        agent: "Source Discovery",
-        message: `Resolved ${totalUrls} URLs from ${store.spec?.sources.length || 0} queries`,
-        level: "success",
-      });
-
-      await delay(800);
-
-      // Stage 3: Extraction
-      store.setStage("extracting");
-      store.setProgress(45);
-
-      for (const result of store.extractionResults) {
-        store.addLog({
-          stage: "extracting",
-          agent: "Extraction",
-          message: `Processing ${result.query_or_url}...`,
-          level: "info",
-        });
-
-        await delay(400);
-
-        if (result.fetch_errors.length > 0) {
-          for (const err of result.fetch_errors) {
-            const shortErr =
-              err.length > 80 ? err.slice(0, 80) + "..." : err;
-            store.addLog({
-              stage: "extracting",
-              agent: "Extraction",
-              message: `Fetch error: ${shortErr}`,
-              level: "warning",
-            });
+  // SSE event handler — uses getState() to avoid stale closure issues
+  const handleEvent = useCallback(
+    (event: string, data: Record<string, unknown>) => {
+      const s = useWorkflowStore.getState();
+      switch (event) {
+        case "planner:start":
+          s.setStage("planning");
+          s.setProgress(10);
+          s.addLog({ stage: "planning", agent: "Planner", message: "Generating workflow spec...", level: "info" });
+          break;
+        case "planner:done": {
+          const spec = data.spec as WorkflowSpec;
+          s.setSpec(spec);
+          s.addLog({ stage: "planning", agent: "Planner", message: `Generated workflow spec with ${spec.sources.length} sources`, level: "success" });
+          break;
+        }
+        case "discovery:start":
+          s.setStage("discovering");
+          s.setProgress(25);
+          s.addLog({ stage: "discovering", agent: "Source Discovery", message: `Resolving ${(data.source_count as number) || 0} sources...`, level: "info" });
+          break;
+        case "discovery:done": {
+          const resolvedSpec = data.resolved_spec as ResolvedWorkflowSpec;
+          s.setResolvedSpec(resolvedSpec);
+          const totalUrls = resolvedSpec.sources.reduce((acc: number, src: { resolved?: unknown[] }) => acc + (src.resolved?.length || 0), 0);
+          s.addLog({ stage: "discovering", agent: "Source Discovery", message: `Resolved ${totalUrls} URLs from ${resolvedSpec.sources.length} queries`, level: "success" });
+          break;
+        }
+        case "extraction:start":
+          s.setStage("extracting");
+          s.setProgress(45);
+          s.addLog({ stage: "extracting", agent: "Extraction", message: `Processing ${(data.source_count as number) || 0} sources...`, level: "info" });
+          break;
+        case "extraction:done": {
+          const results = data.extraction_results as SourceExtractionResult[];
+          s.setExtractionResults(results);
+          s.setRecordCount((data.total_records as number) || 0);
+          for (const r of results) {
+            if (r.fetch_errors.length > 0) {
+              for (const err of r.fetch_errors) {
+                s.addLog({ stage: "extracting", agent: "Extraction", message: `Fetch error: ${err.length > 80 ? err.slice(0, 80) + "..." : err}`, level: "warning" });
+              }
+            }
+            if (r.records.length > 0) {
+              s.addLog({ stage: "extracting", agent: "Extraction", message: `Extracted ${r.records.length} records from ${r.query_or_url}`, level: "success" });
+            }
           }
+          break;
         }
-
-        if (result.records.length > 0) {
-          store.incrementRecordCount(result.records.length);
-          store.addLog({
-            stage: "extracting",
-            agent: "Extraction",
-            message: `Extracted ${result.records.length} records from ${result.query_or_url}`,
-            level: "success",
-          });
+        case "critic:start":
+          s.setStage("critiquing");
+          s.setProgress(70);
+          s.addLog({ stage: "critiquing", agent: "Critic", message: "Analyzing extraction quality...", level: "info" });
+          break;
+        case "critic:done":
+          s.addLog({ stage: "critiquing", agent: "Critic", message: "Quality check passed", level: "success" });
+          break;
+        case "validator:start":
+          s.setStage("validating");
+          s.setProgress(85);
+          s.addLog({ stage: "validating", agent: "Validator", message: "Validating and deduplicating records...", level: "info" });
+          break;
+        case "validator:done": {
+          const validated = data.validated_result as ValidatedResult;
+          s.setValidatedResult(validated);
+          s.setRecordCount(validated.clean_records.length);
+          s.addLog({ stage: "validating", agent: "Validator", message: `${validated.clean_records.length} clean records, ${validated.issues.length} issues, ${validated.merges.length} duplicates merged`, level: "success" });
+          break;
         }
-
-        await delay(300);
+        case "pipeline:complete":
+          s.setStage("complete");
+          s.setProgress(100);
+          s.addLog({ stage: "complete", agent: "Pipeline", message: "Pipeline complete!", level: "success" });
+          break;
+        case "pipeline:error":
+          s.setError(data.error as string);
+          s.addLog({ stage: "error", agent: "Pipeline", message: (data.error as string) || "Unknown error", level: "error" });
+          break;
       }
+    },
+    []
+  );
 
-      store.setProgress(70);
-
-      // Stage 4: Critic
-      store.setStage("critiquing");
-      store.setProgress(80);
-      store.addLog({
-        stage: "critiquing",
-        agent: "Critic",
-        message: "Analyzing extraction quality...",
-        level: "info",
-      });
-
-      await delay(600);
-
-      store.addLog({
-        stage: "critiquing",
-        agent: "Critic",
-        message: "All sources passed quality threshold",
-        level: "success",
-      });
-
-      await delay(400);
-
-      // Stage 5: Validation
-      store.setStage("validating");
-      store.setProgress(90);
-
-      if (store.validatedResult) {
-        const v = store.validatedResult;
-        store.addLog({
-          stage: "validating",
-          agent: "Validator",
-          message: `${v.clean_records.length} clean records, ${v.issues.length} issues, ${v.merges.length} duplicates merged`,
-          level: "success",
-        });
-      }
-
-      await delay(500);
-
-      // Complete
-      store.setStage("complete");
-      store.setProgress(100);
-      store.setRecordCount(
-        store.validatedResult?.clean_records.length || 0
-      );
-      store.addLog({
-        stage: "complete",
-        agent: "Pipeline",
-        message: "Pipeline complete!",
-        level: "success",
-      });
-    };
-
-    // Start simulation
-    simulateProgress();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const handleError = useCallback((err: Error) => {
+    const s = useWorkflowStore.getState();
+    s.setError(err.message);
+    s.addLog({ stage: "error", agent: "Pipeline", message: err.message, level: "error" });
   }, []);
+
+  // Connect to SSE stream on mount
+  useEffect(() => {
+    if (!prompt) return;
+
+    useWorkflowStore.getState().setPrompt(prompt);
+    abortRef.current = connectPipelineStream(prompt, handleEvent, () => {}, handleError);
+
+    return () => { abortRef.current?.(); };
+  }, [prompt, handleEvent, handleError]);
 
   const handleCopyJson = () => {
     if (store.validatedResult) {
@@ -374,8 +352,4 @@ function StatCard({
       </p>
     </div>
   );
-}
-
-function delay(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

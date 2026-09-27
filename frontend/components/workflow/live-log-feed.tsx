@@ -7,7 +7,7 @@ import { useWorkflowStore } from "@/hooks/use-workflow-state";
 import { formatTimestamp } from "@/lib/utils";
 
 const levelColors = {
-  info: "text-text-secondary",
+  info: "text-text-primary",
   success: "text-emerald",
   warning: "text-amber",
   error: "text-rose",
@@ -78,7 +78,7 @@ export function LiveLogFeed() {
                   levelColors[log.level]
                 )}
               >
-                <span className="text-text-muted shrink-0">
+                <span className="text-text-secondary shrink-0">
                   [{formatTimestamp(log.timestamp)}]
                 </span>
                 <span className="shrink-0">{stageIcons[log.stage] || "📌"}</span>

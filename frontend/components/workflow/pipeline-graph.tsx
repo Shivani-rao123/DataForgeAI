@@ -5,9 +5,11 @@ import {
   ReactFlow,
   Background,
   Controls,
-  MiniMap,
   type Node,
   type Edge,
+  type EdgeProps,
+  BaseEdge,
+  getBezierPath,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { AgentNode, type AgentNodeData } from "./agent-node";
@@ -21,53 +23,98 @@ const stageToNodeStage = (
   pipelineStage: string,
   nodeIndex: number,
   activeIndex: number
-): "idle" | "planning" | "discovering" | "extracting" | "critiquing" | "validating" | "complete" | "error" => {
+): AgentNodeData["stage"] => {
   if (pipelineStage === "error") return "error";
   if (nodeIndex < activeIndex) return "complete";
-  if (nodeIndex === activeIndex) return pipelineStage as any;
+  if (nodeIndex === activeIndex) return pipelineStage as AgentNodeData["stage"];
   return "idle";
 };
 
+/** Custom animated edge with glowing particles */
+function AnimatedEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  data,
+}: EdgeProps) {
+  const [edgePath, labelX, labelY] = getBezierPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+    curvature: 0.3,
+  });
+
+  const isActive = (data as Record<string, unknown>)?.active === true;
+  const isComplete = (data as Record<string, unknown>)?.complete === true;
+  const label = (data as Record<string, unknown>)?.label as string | undefined;
+
+  const color = isComplete ? "#10b981" : isActive ? "#00f0ff" : "rgba(100,116,139,0.12)";
+
+  return (
+    <>
+      {/* Glow behind edge */}
+      {(isActive || isComplete) && (
+        <BaseEdge
+          path={edgePath}
+          style={{ stroke: color, strokeWidth: 10, opacity: 0.06, filter: "blur(6px)" }}
+        />
+      )}
+      {/* Main edge */}
+      <BaseEdge
+        id={id}
+        path={edgePath}
+        style={{
+          stroke: color,
+          strokeWidth: isActive ? 2 : 1.5,
+          transition: "stroke 0.5s, stroke-width 0.5s",
+          ...(isActive ? { strokeDasharray: "8 4", animation: "flow-line 0.8s linear infinite" } : {}),
+        }}
+      />
+      {/* Flowing particles for active edges */}
+      {isActive && (
+        <>
+          <circle r="4" fill="#00f0ff" opacity="0.8">
+            <animateMotion dur="1.2s" repeatCount="indefinite" path={edgePath} />
+          </circle>
+          <circle r="6" fill="#00f0ff" opacity="0.15">
+            <animateMotion dur="1.2s" repeatCount="indefinite" path={edgePath} />
+          </circle>
+          <circle r="3" fill="#00f0ff" opacity="0.5">
+            <animateMotion dur="1.2s" repeatCount="indefinite" path={edgePath} begin="0.4s" />
+          </circle>
+        </>
+      )}
+      {/* Edge label */}
+      {label && (
+        <foreignObject x={labelX - 45} y={labelY - 14} width="90" height="28" className="pointer-events-none">
+          <div className="edge-label flex items-center justify-center h-full text-[10px]">
+            {label}
+          </div>
+        </foreignObject>
+      )}
+    </>
+  );
+}
+
+const edgeTypes = { animated: AnimatedEdge };
+
 export function PipelineGraph() {
-  const { stage, activeAgentIndex, spec, validatedResult } = useWorkflowStore();
+  const { stage, activeAgentIndex, spec, validatedResult, extractionResults } = useWorkflowStore();
 
   const agentConfigs = useMemo(
     () => [
-      {
-        id: "planner",
-        label: "Planner",
-        agent: "Groq LLM",
-        icon: "brain",
-        description: "Decomposes prompt into workflow spec",
-      },
-      {
-        id: "discovery",
-        label: "Source Discovery",
-        agent: "Tavily API",
-        icon: "search",
-        description: "Resolves queries to real URLs",
-      },
-      {
-        id: "extraction",
-        label: "Extraction",
-        agent: "LLM + Trafilatura",
-        icon: "database",
-        description: "Fetches pages, extracts records",
-      },
-      {
-        id: "critic",
-        label: "Critic",
-        agent: "Self-Healing",
-        icon: "shield",
-        description: "Monitors quality, heals failures",
-      },
-      {
-        id: "validator",
-        label: "Validator",
-        agent: "RapidFuzz",
-        icon: "check",
-        description: "Validates & deduplicates records",
-      },
+      { id: "planner", label: "Planner", agent: "Groq LLM", icon: "brain", description: "Decomposes prompt into workflow spec" },
+      { id: "discovery", label: "Source Discovery", agent: "Tavily API", icon: "search", description: "Resolves queries to real URLs" },
+      { id: "extraction", label: "Extraction", agent: "LLM + Trafilatura", icon: "database", description: "Fetches pages, extracts records" },
+      { id: "critic", label: "Critic", agent: "Self-Healing", icon: "shield", description: "Monitors quality, heals failures" },
+      { id: "validator", label: "Validator", agent: "RapidFuzz", icon: "check", description: "Validates & deduplicates records" },
     ],
     []
   );
@@ -77,80 +124,77 @@ export function PipelineGraph() {
       agentConfigs.map((config, i) => ({
         id: config.id,
         type: "agent",
-        position: { x: i * 260, y: 50 },
+        position: { x: i * 300, y: 80 },
         data: {
           ...config,
           stage: stageToNodeStage(stage, i, activeAgentIndex),
+          progress: i < activeAgentIndex ? 100 : i === activeAgentIndex ? undefined : 0,
           stats:
-            i === 4 && validatedResult
-              ? `${validatedResult.clean_records.length} clean records`
-              : i === 0 && spec
-                ? `${spec.sources.length} sources`
-                : undefined,
+            i === 0 && spec
+              ? `${spec.sources.length} sources`
+              : i === 1 && spec
+                ? `${spec.fields.length} fields`
+                : i === 2 && extractionResults.length > 0
+                  ? `${extractionResults.reduce((a, r) => a + r.records.length, 0)} records`
+                  : i === 4 && validatedResult
+                    ? `${validatedResult.clean_records.length} clean`
+                    : undefined,
         },
       })),
-    [agentConfigs, stage, activeAgentIndex, spec, validatedResult]
+    [agentConfigs, stage, activeAgentIndex, spec, validatedResult, extractionResults]
   );
+
+  const edgeLabels = useMemo(() => {
+    if (!spec) return ["", "", "", ""];
+    return [
+      `${spec.sources.length} queries`,
+      spec.sources.reduce((a, s) => {
+        const count = "resolved" in s ? (s as { resolved?: unknown[] }).resolved?.length || 0 : 0;
+        return a + count;
+      }, 0) + " URLs",
+      extractionResults.length > 0
+        ? `${extractionResults.reduce((a, r) => a + r.records.length, 0)} raw`
+        : "records",
+      validatedResult ? `${validatedResult.clean_records.length} clean` : "validated",
+    ];
+  }, [spec, extractionResults, validatedResult]);
 
   const edges: Edge[] = useMemo(
     () =>
-      agentConfigs.slice(0, -1).map((config, i) => {
-        const nextConfig = agentConfigs[i + 1];
-        const isComplete = i < activeAgentIndex;
-        const isActive = i === activeAgentIndex;
-
-        return {
-          id: `${config.id}-${nextConfig.id}`,
-          source: config.id,
-          target: nextConfig.id,
-          type: "smoothstep",
-          animated: isActive,
-          style: {
-            stroke: isComplete
-              ? "#10b981"
-              : isActive
-                ? "#00f0ff"
-                : "rgba(100, 116, 139, 0.2)",
-            strokeWidth: isActive ? 2 : 1,
-          },
-        };
-      }),
-    [agentConfigs, activeAgentIndex]
+      agentConfigs.slice(0, -1).map((config, i) => ({
+        id: `${config.id}-${agentConfigs[i + 1].id}`,
+        source: config.id,
+        target: agentConfigs[i + 1].id,
+        type: "animated",
+        data: { active: i === activeAgentIndex, complete: i < activeAgentIndex, label: edgeLabels[i] },
+      })),
+    [agentConfigs, activeAgentIndex, edgeLabels]
   );
 
   return (
-    <div className="h-full w-full rounded-2xl border border-border-subtle bg-card-solid/50 overflow-hidden">
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        fitView
-        fitViewOptions={{ padding: 0.3 }}
-        proOptions={{ hideAttribution: true }}
-        defaultEdgeOptions={{
-          type: "smoothstep",
-          style: { strokeWidth: 1 },
-        }}
-      >
-        <Background color="rgba(100,116,139,0.08)" gap={24} size={1} />
-        <Controls
-          position="bottom-left"
-          className="!bg-card-solid !border-border-subtle !rounded-lg !shadow-lg"
-        />
-        <MiniMap
-          position="bottom-right"
-          nodeColor={(node) => {
-            const s = node.data?.stage;
-            if (s === "complete") return "#10b981";
-            if (s === "error") return "#f43f5e";
-            if (["planning", "discovering", "extracting", "critiquing", "validating"].includes(s as string))
-              return "#00f0ff";
-            return "#1e293b";
-          }}
-          maskColor="rgba(5, 5, 16, 0.8)"
-          className="!bg-elevated !border-border-subtle !rounded-lg"
-        />
-      </ReactFlow>
+    <div className="h-full w-full rounded-2xl border border-border-subtle bg-[#080818] overflow-hidden relative">
+      {/* Subtle radial gradient behind the graph */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(0,240,255,0.03)_0%,transparent_70%)]" />
+      <div className="relative h-full w-full">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          fitView
+          fitViewOptions={{ padding: 0.3 }}
+          proOptions={{ hideAttribution: true }}
+          nodesDraggable={false}
+          nodesConnectable={false}
+        >
+          <Background color="rgba(0, 240, 255, 0.03)" gap={50} size={1} />
+          <Controls
+            position="bottom-left"
+            className="!bg-card-solid !border-border-subtle !rounded-lg !shadow-lg"
+            showInteractive={false}
+          />
+        </ReactFlow>
+      </div>
     </div>
   );
 }

@@ -10,8 +10,10 @@ from fastapi.responses import StreamingResponse
 
 from app.agents.planner import plan_workflow
 from app.agents.source_discovery import discover_sources
-from app.graph import extract_all, critic_node, validator_node
-from app.schemas import WorkflowSpec
+from app.agents.extraction import extract_all
+from app.agents.critic import check_health, heal_and_retry
+from app.agents.validator import validate_and_dedupe
+from app.schemas import WorkflowSpec, SourceExtractionResult
 
 router = APIRouter()
 
@@ -25,7 +27,11 @@ def _sse_event(event: str, data: dict) -> str:
 
 
 async def _run_pipeline_stream(prompt: str):
-    """Run the full pipeline and yield SSE events at each stage."""
+    """Run the full pipeline and yield SSE events at each stage.
+
+    Each ``done`` event carries the full data payload so the frontend can
+    populate its state incrementally — no second request needed.
+    """
     task_id = str(uuid.uuid4())
 
     # --- Stage 1: Planner ---
@@ -34,7 +40,6 @@ async def _run_pipeline_stream(prompt: str):
         spec = plan_workflow(prompt)
         yield _sse_event("planner:done", {
             "spec": spec.model_dump(),
-            "source_count": len(spec.sources),
         })
     except Exception as err:
         yield _sse_event("pipeline:error", {"error": f"Planner failed: {err}"})
@@ -44,13 +49,8 @@ async def _run_pipeline_stream(prompt: str):
     yield _sse_event("discovery:start", {"source_count": len(spec.sources)})
     try:
         resolved_spec = discover_sources(spec)
-        total_urls = sum(len(s.resolved) for s in resolved_spec.sources)
         yield _sse_event("discovery:done", {
-            "resolved_count": total_urls,
-            "sources": [
-                {"query": s.query_or_url, "url_count": len(s.resolved)}
-                for s in resolved_spec.sources
-            ],
+            "resolved_spec": resolved_spec.model_dump(),
         })
     except Exception as err:
         yield _sse_event("pipeline:error", {"error": f"Discovery failed: {err}"})
@@ -59,18 +59,11 @@ async def _run_pipeline_stream(prompt: str):
     # --- Stage 3: Extraction ---
     yield _sse_event("extraction:start", {"source_count": len(resolved_spec.sources)})
     try:
-        extraction_results = extract_all(resolved_spec, spec.fields)
+        extraction_results = extract_all(resolved_spec)
         total_records = sum(len(r.records) for r in extraction_results)
         yield _sse_event("extraction:done", {
+            "extraction_results": [r.model_dump() for r in extraction_results],
             "total_records": total_records,
-            "source_results": [
-                {
-                    "query": r.query_or_url,
-                    "record_count": len(r.records),
-                    "error_count": len(r.fetch_errors),
-                }
-                for r in extraction_results
-            ],
         })
     except Exception as err:
         yield _sse_event("pipeline:error", {"error": f"Extraction failed: {err}"})
@@ -78,21 +71,36 @@ async def _run_pipeline_stream(prompt: str):
 
     # --- Stage 4: Critic ---
     yield _sse_event("critic:start", {})
+    healed_results: list[SourceExtractionResult] = []
     try:
-        healed_results = critic_node(resolved_spec, extraction_results)
-        yield _sse_event("critic:done", {"healed": True})
+        fields = spec.fields
+        resolved_sources = resolved_spec.sources
+        for result, resolved_source in zip(extraction_results, resolved_sources):
+            report = check_health(result, fields)
+            if not report.needs_healing or not resolved_source.resolved:
+                healed_results.append(result)
+                continue
+            retry_url = resolved_source.resolved[0].url
+            healing = heal_and_retry(retry_url, fields, result.records)
+            healed_results.append(
+                SourceExtractionResult(
+                    query_or_url=result.query_or_url,
+                    records=result.records + healing.recovered_records,
+                    fetch_errors=result.fetch_errors + ([healing.diagnosis] if healing.diagnosis else []),
+                )
+            )
+        yield _sse_event("critic:done", {})
     except Exception as err:
         healed_results = extraction_results
-        yield _sse_event("critic:done", {"healed": False, "error": str(err)})
+        yield _sse_event("critic:done", {"warning": str(err)})
 
     # --- Stage 5: Validator ---
     yield _sse_event("validator:start", {})
     try:
-        validated = validator_node(healed_results, spec.validation_rules)
+        all_records = [r for result in healed_results for r in result.records]
+        validated = validate_and_dedupe(all_records, spec.validation_rules)
         yield _sse_event("validator:done", {
-            "clean_records": len(validated.clean_records),
-            "issues": len(validated.issues),
-            "merges": len(validated.merges),
+            "validated_result": validated.model_dump(),
         })
     except Exception as err:
         yield _sse_event("pipeline:error", {"error": f"Validator failed: {err}"})
