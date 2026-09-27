@@ -3,6 +3,7 @@ FastAPI server exposing the Planner + Source-Discovery agents.
 Mirrors the Node version's routes: /api/workflows/plan and /api/workflows/discover,
 plus /api/workflows/run which chains both through the LangGraph graph in one call.
 """
+import os
 from dotenv import load_dotenv
 
 load_dotenv()  # must run before any agent module reads os.environ for API keys
@@ -15,14 +16,45 @@ from app.agents.planner import plan_workflow
 from app.agents.source_discovery import discover_sources
 from app.graph import run_workflow
 from app.schemas import WorkflowSpec
+from app.stream import router as stream_router
+
+# ---------------------------------------------------------------------------
+# CORS configuration
+# ---------------------------------------------------------------------------
+# ALLOWED_ORIGINS — comma-separated list of allowed origin URLs.
+#   • In development, include http://localhost:3000 and/or http://127.0.0.1:3000.
+#   • In production, set this to your real frontend domain(s), e.g.:
+#       ALLOWED_ORIGINS=https://app.example.com,https://www.example.com
+#   • Empty entries and whitespace are silently ignored.
+# ---------------------------------------------------------------------------
+_is_dev = os.environ.get("ENV", "development") == "development"
+
+_raw_origins = os.environ.get("ALLOWED_ORIGINS", "")
+_allowed_origins: list[str] = [
+    o.strip()
+    for o in _raw_origins.split(",")
+    if o.strip()
+]
+
+# In development, automatically include common localhost dev origins.
+if _is_dev:
+    _dev_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    _allowed_origins = list(dict.fromkeys(_allowed_origins + _dev_origins))
+
+# Safety net: if nothing is configured at all, reject all cross-origin requests.
+if not _allowed_origins:
+    _allowed_origins = []
 
 app = FastAPI(title="DataForge AI — Planning Service")
+app.include_router(stream_router)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_allowed_origins,
+    allow_origin_regex=None,
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "Accept"],
 )
 
 

@@ -1,16 +1,50 @@
+# Dependencies
 node_modules/
-.env
-.env.local
-.next/
-dist/
-build/
-*.log
-.DS_Store
-__pycache__/
-*.pyc
 .venv/
 backend-py/venv/
-.venv/
+
+# Environment secrets
+.env
+.env.local
+.env.*.local
+
+# Next.js
+.next/
+out/
+build/
+dist/
+
+# Python
 __pycache__/
 *.pyc
-.env
+*.pyo
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Playwright MCP (may contain sensitive runtime logs)
+.playwright-mcp/
+
+# ZCode
+.zcode/
+.zcodeignore
+
+# Mimosa scans
+.mimosa/
+backend-py/.mimosa/
+
+# Screenshots (not source code)
+*.png
+
+# Misc
+coverage/
+*.tgz
