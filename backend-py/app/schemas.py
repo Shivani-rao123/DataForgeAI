@@ -39,9 +39,7 @@ class ResolvedWorkflowSpec(WorkflowSpec):
     sources: List[ResolvedSource] = Field(min_length=1)
 
 
-# ---------------------------------------------------------------------------
-# Data-agent contracts (Extraction / Validator / Critic) — Person 2
-# ---------------------------------------------------------------------------
+
 
 class ExtractedRecord(BaseModel):
     """One record pulled by an Extraction Agent, before validation/dedupe."""
