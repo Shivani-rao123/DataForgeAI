@@ -73,12 +73,32 @@ def discover(req: DiscoverRequest):
 
 @app.post("/api/workflows/run")
 def run(req: PlanRequest):
-    """Runs Planner -> Source-Discovery in one call via the LangGraph graph."""
+    """Runs Planner -> Source-Discovery -> Extraction -> Critic -> Validator, then persists the run."""
     result = run_workflow(req.prompt)
     if result.get("error"):
         raise HTTPException(status_code=500, detail=result["error"])
+
+    task_id = None
+    persist_error = None
+    try:
+        from app.db.persist import persist_workflow_run
+
+        task_id = persist_workflow_run(
+            req.prompt,
+            result["spec"],
+            result["resolved_spec"],
+            result["extraction_results"],
+            result["validated_result"],
+        )
+    except Exception as err:  # noqa: BLE001 — a DB hiccup shouldn't break the response
+        persist_error = str(err)
+
     return {
         "prompt": req.prompt,
+        "task_id": task_id,
+        "persist_error": persist_error,
         "spec": result["spec"].model_dump(),
         "resolved_spec": result["resolved_spec"].model_dump(),
+        "extraction_results": [r.model_dump() for r in result["extraction_results"]],
+        "validated_result": result["validated_result"].model_dump(),
     }

@@ -9,3 +9,8 @@ build/
 __pycache__/
 *.pyc
 .venv/
+backend-py/venv/
+.venv/
+__pycache__/
+*.pyc
+.env
