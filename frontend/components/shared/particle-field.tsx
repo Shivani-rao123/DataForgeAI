@@ -10,7 +10,7 @@ interface Particle {
   size: number;
   baseOpacity: number;
   opacity: number;
-  hue: number; // 0=cyan, 1=violet, 2=blue
+  hue: number; // 0=white, 1=light grey, 2=dim grey
   pulseSpeed: number;
   pulsePhase: number;
 }
@@ -57,9 +57,9 @@ export function ParticleField() {
     };
 
     const colors = [
-      [0, 240, 255],   // cyan
-      [139, 92, 246],   // violet
-      [56, 189, 248],   // sky blue
+      [255, 255, 255],   // white star
+      [200, 200, 200],   // light grey
+      [140, 140, 140],   // dim grey
     ];
 
     let time = 0;
@@ -143,7 +143,7 @@ export function ParticleField() {
             ctx.beginPath();
             ctx.moveTo(a.x, a.y);
             ctx.lineTo(b.x, b.y);
-            ctx.strokeStyle = `rgba(0, 240, 255, ${alpha + mouseBoost})`;
+            ctx.strokeStyle = `rgba(255, 255, 255, ${alpha + mouseBoost})`;
             ctx.lineWidth = 0.5;
             ctx.stroke();
           }
@@ -153,8 +153,8 @@ export function ParticleField() {
       // Draw mouse glow
       if (mx > 0 && my > 0) {
         const gradient = ctx.createRadialGradient(mx, my, 0, mx, my, MOUSE_RADIUS);
-        gradient.addColorStop(0, "rgba(0, 240, 255, 0.04)");
-        gradient.addColorStop(1, "rgba(0, 240, 255, 0)");
+        gradient.addColorStop(0, "rgba(255, 255, 255, 0.04)");
+        gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
         ctx.fillStyle = gradient;
         ctx.fillRect(mx - MOUSE_RADIUS, my - MOUSE_RADIUS, MOUSE_RADIUS * 2, MOUSE_RADIUS * 2);
       }
