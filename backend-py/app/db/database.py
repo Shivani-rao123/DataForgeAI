@@ -1,5 +1,10 @@
 """
-SQLAlchemy engine/session setup for PostgreSQL.
+SQLAlchemy engine/session setup.
+
+Defaults to a local SQLite file (dataforge.db, created automatically next to
+this backend) — zero setup, works everywhere, good enough for a single-user
+demo. Set DATABASE_URL in .env to point at real Postgres instead; nothing
+else in the app needs to change to switch.
 """
 import os
 from contextlib import contextmanager
@@ -11,11 +16,10 @@ load_dotenv()
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL", "postgresql+psycopg2://postgres:postgres@localhost:5432/dataforge"
-)
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./dataforge.db")
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+_connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args=_connect_args)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 

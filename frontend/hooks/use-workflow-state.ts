@@ -82,7 +82,9 @@ export const useWorkflowStore = create<WorkflowState>((set) => ({
   setExtractionResults: (extractionResults) => set({ extractionResults }),
   setValidatedResult: (validatedResult) => set({ validatedResult }),
 
-  addLog: (log) =>
+  addLog: (log) => {
+    const fn = log.level === "error" || log.level === "warning" ? console.warn : console.log;
+    fn(`[${log.agent}] ${log.message}`);
     set((state) => ({
       logs: [
         ...state.logs,
@@ -92,7 +94,8 @@ export const useWorkflowStore = create<WorkflowState>((set) => ({
           timestamp: new Date(),
         },
       ],
-    })),
+    }));
+  },
 
   setRecordCount: (recordCount) => set({ recordCount }),
   incrementRecordCount: (by) =>

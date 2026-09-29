@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { agentIconMap } from "@/components/shared/agent-icons";
 import type { PipelineStage } from "@/lib/types";
+import { Handle, Position } from "@xyflow/react";
 
 export interface AgentNodeData extends Record<string, unknown> {
   label: string;
@@ -104,6 +105,16 @@ function AgentNodeComponent({ data }: { data: AgentNodeData }) {
             transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
           />
         )}
+        <Handle
+  type="target"
+  position={Position.Left}
+  className="!opacity-0 !w-1 !h-1 !border-0 !min-w-0 !min-h-0"
+/>
+<Handle
+  type="source"
+  position={Position.Right}
+  className="!opacity-0 !w-1 !h-1 !border-0 !min-w-0 !min-h-0"
+/>
 
         {/* Inner glow sphere */}
         <div className={cn(

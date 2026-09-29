@@ -6,11 +6,20 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
+class ConnectorParams(BaseModel):
+    """Parameters for a structured job-API source (ATS boards / aggregators)."""
+    provider: Literal["adzuna", "greenhouse", "lever", "remoteok", "arbeitnow", "usajobs"]
+    keywords: str = ""   # free-text search terms (aggregators)
+    location: str = ""   # city/region filter (aggregators)
+    company: str = ""    # board slug for ATS providers (greenhouse/lever)
+
+
 class SourceSpec(BaseModel):
     """A single source the Planner wants checked, before Source-Discovery resolves it."""
-    type: Literal["web_search", "site"]
+    type: Literal["web_search", "site", "connector"]
     query_or_url: str = Field(min_length=1)
     notes: str = ""
+    connector: Optional[ConnectorParams] = None  # set only when type == "connector"
 
 
 class ResolvedResult(BaseModel):
@@ -18,6 +27,7 @@ class ResolvedResult(BaseModel):
     url: str
     title: Optional[str] = None
     snippet: Optional[str] = None
+    raw_content: Optional[str] = Field(default=None, exclude=True)
 
 
 class ResolvedSource(SourceSpec):
@@ -32,6 +42,7 @@ class WorkflowSpec(BaseModel):
     sources: List[SourceSpec] = Field(min_length=1)
     validation_rules: List[str] = Field(default_factory=list)
     dedupe_strategy: str = ""
+    exclude_domains: List[str] = Field(default_factory=list)  # sites the user asked to avoid
 
 
 class ResolvedWorkflowSpec(WorkflowSpec):
@@ -47,6 +58,11 @@ class ExtractedRecord(BaseModel):
     data: dict = Field(default_factory=dict)  # field_name -> value (str | None)
     citation_snippet: str = ""
     citation_url: str = ""
+    # Result of verifying the record against the user's goal:
+    #   "match"       -> the record clearly satisfies the request
+    #   "unconfirmed" -> the request criterion isn't stated on the page (kept, not dropped)
+    match_status: Literal["match", "unconfirmed"] = "match"
+    match_reason: str = ""
 
 
 class SourceExtractionResult(BaseModel):

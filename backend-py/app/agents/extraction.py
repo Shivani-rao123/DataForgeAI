@@ -2,62 +2,88 @@
 Extraction Agent — for one resolved source, fetches the page, pulls the requested
 fields via the LLM, and captures the exact snippet each record's data came from.
 """
-import functools
 import json
 import os
 import re
 
 import httpx
 import trafilatura
-from langchain_groq import ChatGroq
-from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
+from rapidfuzz import fuzz
+from urllib.parse import urljoin
 
+from app.llm import chat, provider
 from app.schemas import ExtractedRecord, ResolvedSource, SourceExtractionResult
 
-MAX_CHARS_TO_LLM = 6000  # trimmed down from 12000 to reduce tokens-per-minute usage on the free tier
+MIN_FILLED_RATIO = 0.34  # drop records where fewer than this share of fields have a value
+# Groq free tier is capped at 8K tokens/min, so send little; Gemini can take far more per call.
+MAX_CHARS_TO_LLM = int(os.environ.get("MAX_CHARS_TO_LLM", "40000" if provider() == "gemini" else "6000"))
 
 
-@functools.lru_cache(maxsize=1)
-def get_llm() -> ChatGroq:
-    return ChatGroq(
-        model="openai/gpt-oss-20b",
-        api_key=os.environ["GROQ_API_KEY"],
-        max_tokens=2000,
-        max_retries=0,
-        timeout=30,
-    )
+def invoke_llm(messages: list, max_tokens: int | None = None) -> str:
+    """Shared LLM call for extraction.py and critic.py (provider + rate-limit retry live in app/llm.py)."""
+    return chat(messages, max_tokens=max_tokens)
 
 
-def _is_rate_limit_error(err: BaseException) -> bool:
-    text = str(err).lower()
-    return "429" in text or "rate_limit" in text or "rate limit" in text
-
-
-@retry(
-    retry=retry_if_exception(_is_rate_limit_error),
-    wait=wait_exponential(multiplier=2, min=2, max=30),
-    stop=stop_after_attempt(5),
-    reraise=True,
-)
-def invoke_llm(messages: list) -> str:
-    """Shared LLM call for extraction.py and critic.py — retries with backoff on a
-    Groq free-tier 429, instead of failing the whole workflow run."""
-    response = get_llm().invoke(messages)
-    return response.content
+def _head_tail(text: str) -> str:
+    """Keep the start AND the end of long pages (job requirements are usually at the end)."""
+    if len(text) <= MAX_CHARS_TO_LLM:
+        return text
+    head = int(MAX_CHARS_TO_LLM * 0.6)
+    return text[:head] + "\n[...]\n" + text[-(MAX_CHARS_TO_LLM - head):]
 
 
 def fetch_page_text(url: str) -> str:
     resp = httpx.get(url, timeout=15, follow_redirects=True, headers={"User-Agent": "DataForgeAI/1.0"})
     resp.raise_for_status()
-    text = trafilatura.extract(resp.text) or ""
-    return text[:MAX_CHARS_TO_LLM]
+    text = trafilatura.extract(resp.text, include_links=True) or ""
+    return _head_tail(text)
 
 
-def _extraction_prompt(fields: list, page_text: str) -> str:
+THIN_PAGE_CHARS = 4000  # below this, the page is probably a JS shell with no real content
+
+
+def _tavily_extract(url: str) -> str:
+    """Tavily's advanced extractor renders JS-heavy pages that a plain HTML fetch can't read."""
+    from tavily import TavilyClient
+
+    client = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
+    response = client.extract(urls=[url], extract_depth="advanced")
+    results = response.get("results", [])
+    return (results[0].get("raw_content") or "") if results else ""
+
+
+def get_page_text(result) -> str:
+    """Tavily search text if it is substantial; otherwise try Tavily's advanced extractor, then our own fetch."""
+    raw = (getattr(result, "raw_content", None) or "").strip()
+    if len(raw) >= THIN_PAGE_CHARS:
+        return _head_tail(raw)
+    try:
+        deep = _tavily_extract(result.url).strip()
+        if len(deep) > len(raw):
+            print(f"[extraction] thin page {result.url}: {len(raw)} -> {len(deep)} chars via Tavily extract")
+            return _head_tail(deep)
+    except Exception as err:  # noqa: BLE001
+        print(f"[extraction] Tavily extract failed for {result.url}: {err}")
+    if len(raw) > 500:
+        return _head_tail(raw)
+    return fetch_page_text(result.url)
+
+
+def _extraction_prompt(fields: list, page_text: str, goal: str = "") -> str:
     field_list = ", ".join(fields)
+    goal_block = (
+        f"""The user's goal: {goal}
+Skip records that clearly don't match this goal (location, seniority, topic, etc.).
+NEVER copy wording from the goal into a value. Every value must be copied exactly as the page states it
+(e.g. if the page says "3+ years", write "3+ years" even if the goal says freshers).
+"""
+        if goal
+        else ""
+    )
     return f"""You are the Extraction Agent in a data-collection platform.
-Given the page text below, extract every distinct record you can find, using exactly
+{goal_block}Given the page text below, extract every distinct record you can find, using exactly
 these fields: {field_list}.
+Only use values that appear in the page text. Never guess or invent a value; use null instead.
 For each record, also include "citation_snippet": the exact short quote (under 25 words)
 from the page text that the record's data came from.
 
@@ -72,55 +98,272 @@ Page text:
 ---"""
 
 
-def extract_records_from_text(page_text: str, fields: list) -> list:
-    text = invoke_llm([{"role": "user", "content": _extraction_prompt(fields, page_text)}])
+def _salvage_json_array(text: str) -> list:
+    """Recover complete objects from a truncated JSON array."""
+    decoder = json.JSONDecoder()
+    start = text.find("[")
+    if start == -1:
+        return []
+    idx, out = start + 1, []
+    while idx < len(text):
+        while idx < len(text) and text[idx] in " \n\r\t,":
+            idx += 1
+        if idx >= len(text) or text[idx] != "{":
+            break
+        try:
+            obj, end = decoder.raw_decode(text, idx)
+        except json.JSONDecodeError:
+            break
+        out.append(obj)
+        idx = end
+    return out
+
+
+def extract_records_from_text(page_text: str, fields: list, goal: str = "") -> list:
+    text = invoke_llm([{"role": "user", "content": _extraction_prompt(fields, page_text, goal)}])
     cleaned = re.sub(r"```json|```", "", text).strip()
     try:
         parsed = json.loads(cleaned)
     except json.JSONDecodeError:
-        return []
+        parsed = _salvage_json_array(cleaned)
+        print(f"[extraction] JSON parse failed; salvaged {len(parsed)} records. Output starts: {cleaned[:200]!r}")
     if not isinstance(parsed, list):
         return []
     return [item for item in parsed if isinstance(item, dict)]  # drop any malformed non-object entries
 
 
-def extract_from_source(resolved_source: ResolvedSource, fields: list) -> SourceExtractionResult:
+GROUNDING_THRESHOLD = 80
+
+
+def _norm(text) -> str:
+    return re.sub(r"\s+", " ", str(text)).strip().lower()
+
+
+def _squash(text) -> str:
+    return re.sub(r"\s+", "", str(text)).lower()
+
+
+def _is_grounded(value, norm_text: str, squashed_text: str) -> bool:
+    v = _norm(value)
+    if not v:
+        return False
+    if v in norm_text or _squash(v) in squashed_text:
+        return True
+    if re.search(r"\d", v) and len(v) <= 40:
+        return False  # numbers, dates and links must appear exactly as written
+    if len(v) < 4:
+        return False  # short values must match exactly
+    return fuzz.partial_ratio(v, norm_text) >= GROUNDING_THRESHOLD
+
+
+def _ground(data: dict, page_text: str) -> dict:
+    """Null out any value that can't be found in the page text (guards against invented values)."""
+    norm_text = _norm(page_text)
+    squashed_text = _squash(page_text)
+    out = {}
+    for key, value in data.items():
+        if value in (None, ""):
+            out[key] = None
+        elif _is_grounded(value, norm_text, squashed_text):
+            out[key] = value
+        else:
+            print(f"[extraction] ungrounded, nulled: {key}={str(value)[:60]!r}")
+            out[key] = None
+    return out
+
+
+def filter_relevant(records: list, goal: str) -> list:
+    """One small LLM call per source. Classifies each record against the goal and
+    KEEPS anything that isn't a clear contradiction (keep-if-unsure): records whose
+    criterion isn't stated are kept and tagged match_status="unconfirmed"."""
+    if not goal or not records:
+        return records
+    lines = [
+        f"{i}: " + json.dumps({k: (str(v)[:80] if v else None) for k, v in r.data.items()}, ensure_ascii=False)
+        for i, r in enumerate(records)
+    ]
+    records_block = "\n".join(lines)
+    prompt = f"""User goal: {goal}
+
+Below are extracted records as "index: fields". Classify EACH record against the goal.
+Return ONLY a JSON object: {{"verdicts": [{{"index": int, "status": "match"|"contradicts"|"unstated", "reason": string}}]}}
+- "match": the record clearly satisfies the goal.
+- "contradicts": a field clearly conflicts with the goal (wrong location, wrong experience level, unrelated role/topic).
+- "unstated": the goal's criterion is not present in the record (do NOT treat a null field as a contradiction).
+
+Records:
+{records_block}"""
+    try:
+        text = invoke_llm([{"role": "user", "content": prompt}], max_tokens=1200)
+        parsed = json.loads(re.sub(r"```json|```", "", text).strip())
+        verdicts = {v["index"]: v for v in parsed.get("verdicts", []) if isinstance(v.get("index"), int)}
+    except Exception as err:  # noqa: BLE001 — never lose data because the filter failed
+        print(f"[extraction] relevance filter skipped: {err}")
+        return records
+
+    kept: list = []
+    for i, record in enumerate(records):
+        verdict = verdicts.get(i)
+        status = verdict.get("status") if verdict else None
+        if status == "contradicts":
+            continue  # only clear contradictions are dropped
+        if status == "unstated":
+            record.match_status = "unconfirmed"
+            record.match_reason = (verdict.get("reason") or "")[:200]
+        kept.append(record)
+    unconfirmed = sum(1 for r in kept if r.match_status == "unconfirmed")
+    print(f"[extraction] relevance filter kept {len(kept)}/{len(records)} ({unconfirmed} unconfirmed)")
+    return kept
+
+
+# Field-name buckets a connector-sourced posting can fill, keyed by keywords that might
+# appear in whatever field names the Planner invents (e.g. "company_name", "employer").
+# Order matters: first matching bucket wins.
+_CONNECTOR_FIELD_BUCKETS = [
+    (("title", "role", "position", "job_name"), "title"),
+    (("compan", "employer", "agency", "org"), "company"),
+    (("locat",), "location"),
+    (("salary", "pay", "compensation", "wage"), "salary"),
+    (("remote",), "remote"),
+    (("tag", "skill", "categor"), "tags"),
+    (("url", "link", "apply"), "url"),
+    (("descript", "summary", "detail", "about"), "description"),
+]
+
+
+def _parse_connector_record(raw_content: str, fallback_url: str, fields: list) -> dict:
+    """
+    Turns a connector's own structured "Title: X\nCompany: Y\n...\n\n<body>" text
+    directly into a {field: value} dict — no LLM call. Connector responses are already
+    structured data from a real API, not prose to guess at, so there's nothing to extract.
+    """
+    _EMPTY_SENTINELS = {"", "not listed", "none", "n/a", "null", "not specified"}
+    lines = raw_content.split("\n")
+    header: dict[str, str] = {}
+    body_start = len(lines)
+    for i, line in enumerate(lines):
+        if not line.strip():
+            body_start = i + 1
+            break
+        if ":" in line:
+            key, _, value = line.partition(":")
+            value = value.strip()
+            if value.lower() not in _EMPTY_SENTINELS:
+                header[key.strip().lower()] = value
+    body = "\n".join(lines[body_start:]).strip()
+
+    buckets = {
+        "title": header.get("title", ""),
+        "company": header.get("company") or header.get("agency", ""),
+        "location": header.get("location", ""),
+        "salary": header.get("salary", ""),
+        "tags": header.get("tags", ""),
+        "url": fallback_url,
+        "description": body[:400].rsplit(" ", 1)[0] + ("..." if len(body) > 400 else ""),
+    }
+    remote_header = header.get("remote", "").strip().lower()
+    if remote_header in ("true", "yes"):
+        buckets["remote"] = "Remote"
+    elif remote_header in ("false", "no"):
+        buckets["remote"] = "On-site"
+    elif "remote" in buckets["location"].strip().lower():
+        buckets["remote"] = "Remote"
+    else:
+        buckets["remote"] = ""
+
+    data: dict[str, str | None] = {}
+    for field in fields:
+        field_lower = field.lower()
+        value = None
+        for keywords, bucket in _CONNECTOR_FIELD_BUCKETS:
+            if any(kw in field_lower for kw in keywords):
+                value = buckets.get(bucket) or None
+                break
+        data[field] = value
+    return data
+
+
+def extract_from_connector_source(resolved_source: ResolvedSource, fields: list, goal: str = "") -> SourceExtractionResult:
+    """Connector sources are already structured data — parse them directly, no LLM per posting."""
+    records: list = []
+    errors: list = []
+
+    for result in resolved_source.resolved:
+        raw_content = result.raw_content or ""
+        if not raw_content.strip():
+            errors.append(f"{result.url}: connector returned no content")
+            continue
+        data = _parse_connector_record(raw_content, result.url, fields)
+        filled = sum(1 for f in fields if data.get(f))
+        if filled < max(2, int(len(fields) * MIN_FILLED_RATIO)):
+            continue  # posting didn't have enough of the requested fields
+        snippet = raw_content.split("\n\n", 1)[0][:200]  # the header block itself, e.g. "Title: X\nCompany: Y"
+        records.append(
+            ExtractedRecord(
+                source_url=result.url,
+                data=data,
+                citation_snippet=snippet,
+                citation_url=result.url,
+                match_status="match",  # came directly from the source's own structured feed, nothing to ground
+            )
+        )
+    print(f"[extraction] connector {resolved_source.query_or_url!r} -> parsed {len(records)}/{len(resolved_source.resolved)} postings, no LLM calls")
+
+    records = filter_relevant(records, goal)  # one batched call for the whole source, not per-record
+    return SourceExtractionResult(query_or_url=resolved_source.query_or_url, records=records, fetch_errors=errors)
+
+
+def extract_from_source(resolved_source: ResolvedSource, fields: list, goal: str = "") -> SourceExtractionResult:
+    if resolved_source.type == "connector":
+        return extract_from_connector_source(resolved_source, fields, goal)
     records: list = []
     errors: list = []
 
     for result in resolved_source.resolved:
         try:
-            page_text = fetch_page_text(result.url)
+            page_text = get_page_text(result)
         except Exception as err:  # noqa: BLE001
             errors.append(f"{result.url}: {err}")
+            print(f"[extraction] FETCH FAILED {result.url}: {str(err)[:120]}")
             continue
 
         if not page_text.strip():
             errors.append(f"{result.url}: no extractable text")
+            print(f"[extraction] NO TEXT {result.url}")
             continue
 
         try:
-            raw_records = extract_records_from_text(page_text, fields)
+            raw_records = extract_records_from_text(page_text, fields, goal)
         except Exception as err:  # noqa: BLE001 — rate limit exhausted retries, or another LLM failure
             errors.append(f"{result.url}: LLM extraction failed: {err}")
+            print(f"[extraction] LLM FAILED {result.url}: {str(err)[:120]}")
             continue
+        print(f"[extraction] {result.url} -> {len(page_text)} chars, {len(raw_records)} raw records")
 
         for raw in raw_records:
+            data = _ground(raw.get("data", {}), page_text)
+            for key, value in data.items():
+                if isinstance(value, str) and value.startswith("/") and any(h in key.lower() for h in ("link", "url")):
+                    data[key] = urljoin(result.url, value)  # make relative links absolute
+            filled = sum(1 for f in fields if data.get(f))
+            if filled < max(2, int(len(fields) * MIN_FILLED_RATIO)):
+                continue  # mostly-null record: page wasn't really a listing for this goal
             records.append(
                 ExtractedRecord(
                     source_url=result.url,
-                    data=raw.get("data", {}),
+                    data=data,
                     citation_snippet=raw.get("citation_snippet", ""),
                     citation_url=result.url,
                 )
             )
 
+    records = filter_relevant(records, goal)
     return SourceExtractionResult(query_or_url=resolved_source.query_or_url, records=records, fetch_errors=errors)
 
 
 def extract_all(resolved_spec) -> list:
     """Sequential fallback (e.g. for local testing without Redis/RQ running)."""
-    return [extract_from_source(source, resolved_spec.fields) for source in resolved_spec.sources]
+    return [extract_from_source(source, resolved_spec.fields, resolved_spec.goal) for source in resolved_spec.sources]
 
 
 def run_extraction_job(task_id: str, source_id: str, resolved_source_dict: dict, fields: list) -> dict:

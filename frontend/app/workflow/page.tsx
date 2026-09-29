@@ -3,7 +3,8 @@
 import { Suspense, useEffect, useState, useRef, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Download, Copy, Check, ExternalLink } from "lucide-react";
+import { ArrowLeft, Download, Copy, Check, ExternalLink, Terminal } from "lucide-react";
+import { recordsToCsv, downloadCsv } from "@/lib/csv";
 import { PipelineGraph } from "@/components/workflow/pipeline-graph";
 import { LiveLogFeed } from "@/components/workflow/live-log-feed";
 import { AgentStatusStrip } from "@/components/workflow/agent-status-strip";
@@ -29,6 +30,7 @@ function WorkflowPageInner() {
   const store = useWorkflowStore();
   const [showResults, setShowResults] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showLogs, setShowLogs] = useState(false);
   const abortRef = useRef<(() => void) | null>(null);
 
   // Redirect if no prompt in URL
@@ -139,11 +141,15 @@ function WorkflowPageInner() {
     if (!prompt) return;
 
     useWorkflowStore.getState().setPrompt(prompt);
-    abortRef.current = connectPipelineStream(prompt, handleEvent, () => {}, handleError);
+    // Delay so React StrictMode's dev-only mount/unmount/mount only opens one connection.
+    const t = setTimeout(() => {
+      abortRef.current = connectPipelineStream(prompt, handleEvent, () => {}, handleError);
+    }, 0);
 
-    return () => { abortRef.current?.(); };
+    return () => { clearTimeout(t); abortRef.current?.(); };
   }, [prompt, handleEvent, handleError]);
 
+  
   const handleCopyJson = () => {
     if (store.validatedResult) {
       navigator.clipboard.writeText(
@@ -153,6 +159,14 @@ function WorkflowPageInner() {
       setTimeout(() => setCopied(false), 2000);
     }
   };
+
+  const handleExportCsv = () => {
+    if (store.validatedResult) {
+      const csv = recordsToCsv(store.validatedResult.clean_records);
+      downloadCsv(csv, `dataforge-export-${Date.now()}.csv`);
+    }
+  };
+
 
   return (
     <main className="min-h-screen bg-void flex flex-col">
@@ -195,7 +209,10 @@ function WorkflowPageInner() {
                 )}
                 {copied ? "Copied!" : "Copy JSON"}
               </button>
-              <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono bg-cyan/10 border border-cyan/20 text-cyan hover:bg-cyan/20 transition-all">
+              <button
+                onClick={handleExportCsv}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono bg-cyan/10 border border-cyan/20 text-cyan hover:bg-cyan/20 transition-all"
+              >
                 <Download className="h-3.5 w-3.5" />
                 Export CSV
               </button>
@@ -209,55 +226,32 @@ function WorkflowPageInner() {
         <AgentStatusStrip />
       </div>
 
-      {/* Main content: Graph + Log */}
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-4 px-6 pb-6 min-h-0">
-        {/* Pipeline graph */}
+      {/* Main content: Graph */}
+      <div className="flex flex-col gap-4 px-6 pb-6">
         <motion.div
           initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.5 }}
-          className="min-h-[400px] lg:min-h-0"
+          className="h-[420px]"
         >
           <PipelineGraph />
         </motion.div>
 
-        {/* Right panel: Log + Stats */}
-        <div className="flex flex-col gap-4 min-h-[300px] lg:min-h-0">
-          {/* Live log */}
-          <div className="flex-1 min-h-0">
-            <LiveLogFeed />
-          </div>
-
-          {/* Stats cards */}
-          <AnimatePresence>
-            {store.stage === "complete" && (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 20 }}
-                className="grid grid-cols-3 gap-3"
-              >
-                <StatCard
-                  label="Records"
-                  value={store.validatedResult?.clean_records.length || 0}
-                  color="cyan"
-                />
-                <StatCard
-                  label="Issues"
-                  value={store.validatedResult?.issues.length || 0}
-                  color="amber"
-                />
-                <StatCard
-                  label="Merged"
-                  value={store.validatedResult?.merges.length || 0}
-                  color="violet"
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+        <AnimatePresence>
+          {store.stage === "complete" && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              className="grid grid-cols-3 gap-3 max-w-md"
+            >
+              <StatCard label="Records" value={store.validatedResult?.clean_records.length || 0} color="cyan" />
+              <StatCard label="Issues" value={store.validatedResult?.issues.length || 0} color="amber" />
+              <StatCard label="Merged" value={store.validatedResult?.merges.length || 0} color="violet" />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
-
       {/* Results preview overlay */}
       <AnimatePresence>
         {showResults && store.validatedResult && (
@@ -273,32 +267,32 @@ function WorkflowPageInner() {
                   <GradientText>Extracted Records</GradientText>
                 </h2>
                 <span className="text-xs font-mono text-text-muted">
-                  Showing first 5 of{" "}
+                  Showing all{" "}
                   {store.validatedResult.clean_records.length}
                 </span>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {store.validatedResult.clean_records.slice(0, 5).map((record, i) => (
+                {store.validatedResult.clean_records.map((record, i) => (
                   <motion.div
                     key={i}
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: i * 0.1 }}
+                    transition={{ delay: Math.min(i, 10) * 0.05 }}
                     className="rounded-xl border border-border-subtle bg-elevated/50 p-4 hover:border-cyan/20 transition-all"
                   >
-                    {Object.entries(record.data).map(([key, value]) => (
-                      <div key={key} className="mb-2 last:mb-0">
-                        <span className="text-[10px] font-mono uppercase tracking-wider text-text-muted block">
-                          {key.replace(/_/g, " ")}
-                        </span>
-                        <span className="text-sm text-text-primary">
-                          {value || (
-                            <span className="text-text-muted italic">null</span>
-                          )}
-                        </span>
-                      </div>
-                    ))}
+                    {Object.entries(record.data)
+                      .filter(([, value]) => value)
+                      .map(([key, value]) => (
+                        <div key={key} className="mb-2 last:mb-0">
+                          <span className="text-[10px] font-mono uppercase tracking-wider text-text-muted block">
+                            {key.replace(/_/g, " ")}
+                          </span>
+                          <span className="text-sm text-text-primary line-clamp-4">
+                            {value}
+                          </span>
+                        </div>
+                      ))}
                     {record.citation_url && (
                       <a
                         href={record.citation_url}
@@ -314,6 +308,26 @@ function WorkflowPageInner() {
                 ))}
               </div>
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {/* Log popup */}
+      <button
+        onClick={() => setShowLogs((v) => !v)}
+        className="fixed bottom-4 right-4 z-50 flex items-center gap-2 px-3 py-2 rounded-full text-xs font-mono bg-elevated border border-border-subtle hover:border-cyan/30 transition-all"
+      >
+        <Terminal className="h-3.5 w-3.5" />
+        Logs ({store.logs.length})
+      </button>
+      <AnimatePresence>
+        {showLogs && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed bottom-16 right-4 z-50 w-[380px] max-w-[calc(100vw-2rem)] h-[420px]"
+          >
+            <LiveLogFeed />
           </motion.div>
         )}
       </AnimatePresence>

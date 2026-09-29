@@ -24,10 +24,14 @@ def _looks_implausible(field: str, value) -> str | None:
 
 
 def _primary_name_field(record: ExtractedRecord) -> str | None:
-    for key in record.data:
-        if any(hint in key.lower() for hint in ("name", "title", "company")):
-            return record.data[key]
-    return None
+    """Identity key: ALL name/title/company-like fields joined, so two different
+    companies with the same job title are not treated as duplicates."""
+    parts = [
+        str(v)
+        for k, v in record.data.items()
+        if any(hint in k.lower() for hint in ("name", "title", "company")) and v
+    ]
+    return " | ".join(parts) if parts else None
 
 
 def _domain(url: str) -> str:

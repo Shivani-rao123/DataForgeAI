@@ -106,13 +106,27 @@ async def _run_pipeline_stream(prompt: str):
         yield _sse_event("pipeline:error", {"error": f"Validator failed: {err}"})
         return
 
+    # --- Persist ---
+    # Falls back to the in-memory task_id if the DB write fails, so a run that
+    # completed is never lost from the UI even when persistence itself breaks.
+    persisted_task_id = task_id
+    persist_error = None
+    try:
+        from app.db.persist import persist_workflow_run
+
+        persisted_task_id = persist_workflow_run(prompt, spec, resolved_spec, extraction_results, validated)
+    except Exception as err:  # noqa: BLE001 — a DB hiccup shouldn't break a completed run
+        persist_error = str(err)
+        print(f"[stream] persist failed (run still shown in UI, just not saved to history): {err}")
+
     # --- Complete ---
     yield _sse_event("pipeline:complete", {
-        "task_id": task_id,
+        "task_id": persisted_task_id,
         "total_records": len(validated.clean_records),
+        "persist_error": persist_error,
     })
 
-    # Store result for potential replay
+    # Store result for potential replay (same request/session only)
     _task_results[task_id] = {
         "prompt": prompt,
         "spec": spec.model_dump(),

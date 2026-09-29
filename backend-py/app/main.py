@@ -17,6 +17,7 @@ from app.agents.source_discovery import discover_sources
 from app.graph import run_workflow
 from app.schemas import WorkflowSpec
 from app.stream import router as stream_router
+from app.db.database import init_db
 
 # ---------------------------------------------------------------------------
 # CORS configuration
@@ -69,6 +70,39 @@ class DiscoverRequest(BaseModel):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/tasks")
+def list_tasks_route():
+    from app.db.persist import list_tasks
+
+    try:
+        return {"tasks": list_tasks()}
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=f"Could not list tasks: {err}") from err
+
+
+@app.get("/api/tasks/{task_id}")
+def get_task_route(task_id: str):
+    from app.db.persist import get_task
+
+    try:
+        task = get_task(task_id)
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=f"Could not load task: {err}") from err
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
+
+@app.on_event("startup")
+def init_database():
+    """Creates the Postgres/SQLite tables on first run if they don't exist yet."""
+    try:
+        init_db()
+        print("Database ready.")
+    except Exception as err:
+        print(f"DB init failed (non-fatal — history/persistence will be unavailable): {err}")
+
 
 @app.on_event("startup")
 def warm_up_llm():

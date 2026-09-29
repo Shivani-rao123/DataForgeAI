@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { AppChrome } from "@/components/layout/app-chrome";
 
 export const metadata: Metadata = {
   title: "DataForge AI — Intelligent Data Pipeline",
@@ -15,7 +16,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="min-h-screen bg-void text-text-primary antialiased">
-        {children}
+        <AppChrome>{children}</AppChrome>
       </body>
     </html>
   );
