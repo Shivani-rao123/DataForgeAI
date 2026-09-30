@@ -5,9 +5,9 @@ import { usePathname } from "next/navigation";
 import { PlusCircle, History, Database, Sparkles } from "lucide-react";
 
 const NAV_ITEMS = [
-  { label: "New Task", href: "/", icon: PlusCircle, enabled: true },
-  { label: "History", href: "/history", icon: History, enabled: false },
-  { label: "Datasets", href: "/datasets", icon: Database, enabled: false },
+  { label: "New Task", href: "/", icon: PlusCircle },
+  { label: "History", href: "/history", icon: History },
+  { label: "Datasets", href: "/datasets", icon: Database },
 ];
 
 export function Sidebar() {
@@ -24,24 +24,8 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 px-3 py-4 flex flex-col gap-1">
-        {NAV_ITEMS.map(({ label, href, icon: Icon, enabled }) => {
+        {NAV_ITEMS.map(({ label, href, icon: Icon }) => {
           const active = pathname === href;
-          if (!enabled) {
-            return (
-              <div
-                key={label}
-                className="flex items-center justify-between px-3 py-2 rounded-lg text-sm text-text-muted cursor-not-allowed"
-              >
-                <span className="flex items-center gap-2">
-                  <Icon className="h-4 w-4" />
-                  {label}
-                </span>
-                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-card-solid border border-border-subtle">
-                  Soon
-                </span>
-              </div>
-            );
-          }
           return (
             <Link
               key={label}

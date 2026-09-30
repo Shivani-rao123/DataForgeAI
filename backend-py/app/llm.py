@@ -47,7 +47,7 @@ def _should_retry_same_provider(err: BaseException) -> bool:
 def _groq_client():
     from langchain_groq import ChatGroq
 
-    model = os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b")
+    model = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
     extra = {"reasoning_effort": "low"} if model.startswith("openai/gpt-oss") else {}
     return ChatGroq(
         model=model,

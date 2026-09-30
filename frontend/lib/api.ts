@@ -1,4 +1,4 @@
-import type { PlanResponse, RunResponse, WorkflowSpec } from "./types";
+import type { PlanResponse, RunResponse, WorkflowSpec, TaskSummary, TaskDetail } from "./types";
 
 // ---------------------------------------------------------------------------
 // Backend API base URL
@@ -121,4 +121,17 @@ export function connectPipelineStream(
   };
 
   return () => es.close();
+}
+
+export async function listTasks(): Promise<TaskSummary[]> {
+  const res = await fetch(`${API_BASE}/tasks`);
+  if (!res.ok) throw new Error(`Failed to list tasks: ${res.status}`);
+  const data = await res.json();
+  return data.tasks as TaskSummary[];
+}
+
+export async function getTask(taskId: string): Promise<TaskDetail> {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}`);
+  if (!res.ok) throw new Error(`Failed to load task: ${res.status}`);
+  return (await res.json()) as TaskDetail;
 }

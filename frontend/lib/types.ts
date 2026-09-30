@@ -33,6 +33,8 @@ export interface ExtractedRecord {
   data: Record<string, string | null>;
   citation_snippet: string;
   citation_url: string;
+  match_status?: "match" | "unconfirmed";
+  match_reason?: string;
 }
 
 export interface SourceExtractionResult {
@@ -105,4 +107,24 @@ export interface LogEntry {
   agent: string;
   message: string;
   level: "info" | "success" | "warning" | "error";
+}
+
+/* ── History / Datasets (matches backend-py/app/db/persist.py) ── */
+
+export interface TaskSummary {
+  task_id: string;
+  prompt: string;
+  status: string;
+  created_at: string | null;
+  record_count: number;
+}
+
+export interface TaskDetail {
+  task_id: string;
+  prompt: string;
+  status: string;
+  created_at: string | null;
+  spec: WorkflowSpec;
+  sources: { url: string; status: string; record_count: number }[];
+  validated_result: ValidatedResult;
 }

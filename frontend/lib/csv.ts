@@ -11,8 +11,6 @@ function escapeCsvValue(value: string | null | undefined): string {
 
 export function recordsToCsv(records: ExtractedRecord[]): string {
   if (records.length === 0) return "";
-  // Union of every field across all records, in first-seen order — a later record
-  // may have a field an earlier one lacked.
   const headers: string[] = [];
   for (const r of records) {
     for (const key of Object.keys(r.data)) {
@@ -27,7 +25,8 @@ export function recordsToCsv(records: ExtractedRecord[]): string {
 }
 
 export function downloadCsv(csv: string, filename: string) {
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const BOM = "\uFEFF";
+  const blob = new Blob([BOM + csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;

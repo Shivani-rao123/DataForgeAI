@@ -3,15 +3,15 @@
 import { Suspense, useEffect, useState, useRef, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Download, Copy, Check, ExternalLink, Terminal } from "lucide-react";
-import { recordsToCsv, downloadCsv } from "@/lib/csv";
+import { ArrowLeft, Download, Copy, Check, Terminal } from "lucide-react";
+import { ResultsTable } from "@/components/workflow/results-table";
 import { PipelineGraph } from "@/components/workflow/pipeline-graph";
 import { LiveLogFeed } from "@/components/workflow/live-log-feed";
 import { AgentStatusStrip } from "@/components/workflow/agent-status-strip";
 import { GradientText } from "@/components/shared/gradient-text";
 import { AnimatedCounter } from "@/components/shared/animated-counter";
 import { useWorkflowStore } from "@/hooks/use-workflow-state";
-import { connectPipelineStream } from "@/lib/api";
+import { connectPipelineStream, getTask } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { WorkflowSpec, ResolvedWorkflowSpec, SourceExtractionResult, ValidatedResult } from "@/lib/types";
 
@@ -27,18 +27,36 @@ function WorkflowPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const prompt = searchParams.get("prompt") || "";
+  const taskId = searchParams.get("task_id") || "";
   const store = useWorkflowStore();
   const [showResults, setShowResults] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const abortRef = useRef<(() => void) | null>(null);
 
-  // Redirect if no prompt in URL
+  // Redirect if neither a live prompt nor a saved task_id is present
   useEffect(() => {
-    if (!prompt) {
+    if (!prompt && !taskId) {
       router.push("/");
     }
-  }, [prompt, router]);
+  }, [prompt, taskId, router]);
+
+  // Reopening a saved run from History/Datasets: fetch it once, skip the live SSE pipeline.
+  useEffect(() => {
+    if (!taskId) return;
+    useWorkflowStore.getState().reset();
+    getTask(taskId)
+      .then((task) => {
+        const s = useWorkflowStore.getState();
+        s.setPrompt(task.prompt);
+        s.setSpec(task.spec);
+        s.setValidatedResult(task.validated_result);
+        s.setStage("complete");
+        s.setProgress(100);
+      })
+      .catch((err) => setLoadError(err.message || "Could not load this workflow"));
+  }, [taskId]);
 
   // Show results after pipeline completes
   useEffect(() => {
@@ -136,9 +154,9 @@ function WorkflowPageInner() {
     s.addLog({ stage: "error", agent: "Pipeline", message: err.message, level: "error" });
   }, []);
 
-  // Connect to SSE stream on mount
+  // Connect to SSE stream on mount (skipped when reopening a saved task via task_id)
   useEffect(() => {
-    if (!prompt) return;
+    if (!prompt || taskId) return;
 
     useWorkflowStore.getState().setPrompt(prompt);
     // Delay so React StrictMode's dev-only mount/unmount/mount only opens one connection.
@@ -147,9 +165,8 @@ function WorkflowPageInner() {
     }, 0);
 
     return () => { clearTimeout(t); abortRef.current?.(); };
-  }, [prompt, handleEvent, handleError]);
+  }, [prompt, taskId, handleEvent, handleError]);
 
-  
   const handleCopyJson = () => {
     if (store.validatedResult) {
       navigator.clipboard.writeText(
@@ -159,14 +176,6 @@ function WorkflowPageInner() {
       setTimeout(() => setCopied(false), 2000);
     }
   };
-
-  const handleExportCsv = () => {
-    if (store.validatedResult) {
-      const csv = recordsToCsv(store.validatedResult.clean_records);
-      downloadCsv(csv, `dataforge-export-${Date.now()}.csv`);
-    }
-  };
-
 
   return (
     <main className="min-h-screen bg-void flex flex-col">
@@ -209,10 +218,7 @@ function WorkflowPageInner() {
                 )}
                 {copied ? "Copied!" : "Copy JSON"}
               </button>
-              <button
-                onClick={handleExportCsv}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono bg-cyan/10 border border-cyan/20 text-cyan hover:bg-cyan/20 transition-all"
-              >
+              <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono bg-cyan/10 border border-cyan/20 text-cyan hover:bg-cyan/20 transition-all">
                 <Download className="h-3.5 w-3.5" />
                 Export CSV
               </button>
@@ -228,6 +234,11 @@ function WorkflowPageInner() {
 
       {/* Main content: Graph */}
       <div className="flex flex-col gap-4 px-6 pb-6">
+        {loadError && (
+          <div className="text-sm text-rose bg-rose/10 border border-rose/20 rounded-lg px-4 py-3">
+            Couldn&apos;t load this workflow: {loadError}
+          </div>
+        )}
         <motion.div
           initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -272,41 +283,7 @@ function WorkflowPageInner() {
                 </span>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {store.validatedResult.clean_records.map((record, i) => (
-                  <motion.div
-                    key={i}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: Math.min(i, 10) * 0.05 }}
-                    className="rounded-xl border border-border-subtle bg-elevated/50 p-4 hover:border-cyan/20 transition-all"
-                  >
-                    {Object.entries(record.data)
-                      .filter(([, value]) => value)
-                      .map(([key, value]) => (
-                        <div key={key} className="mb-2 last:mb-0">
-                          <span className="text-[10px] font-mono uppercase tracking-wider text-text-muted block">
-                            {key.replace(/_/g, " ")}
-                          </span>
-                          <span className="text-sm text-text-primary line-clamp-4">
-                            {value}
-                          </span>
-                        </div>
-                      ))}
-                    {record.citation_url && (
-                      <a
-                        href={record.citation_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="mt-2 inline-flex items-center gap-1 text-[10px] font-mono text-cyan/60 hover:text-cyan transition-colors"
-                      >
-                        <ExternalLink className="h-2.5 w-2.5" />
-                        Source
-                      </a>
-                    )}
-                  </motion.div>
-                ))}
-              </div>
+              <ResultsTable records={store.validatedResult.clean_records} />
             </div>
           </motion.div>
         )}
