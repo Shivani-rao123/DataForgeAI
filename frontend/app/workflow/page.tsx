@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState, useRef, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Download, Copy, Check, Terminal } from "lucide-react";
+import { ArrowLeft, Download, Copy, Check, Terminal, XCircle, RotateCcw } from "lucide-react";
 import { ResultsTable } from "@/components/workflow/results-table";
 import { PipelineGraph } from "@/components/workflow/pipeline-graph";
 import { LiveLogFeed } from "@/components/workflow/live-log-feed";
@@ -13,6 +13,7 @@ import { AnimatedCounter } from "@/components/shared/animated-counter";
 import { useWorkflowStore } from "@/hooks/use-workflow-state";
 import { connectPipelineStream, getTask } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { downloadCsv, recordsToCsv } from "@/lib/csv";
 import type { WorkflowSpec, ResolvedWorkflowSpec, SourceExtractionResult, ValidatedResult } from "@/lib/types";
 
 export default function WorkflowPage() {
@@ -33,6 +34,7 @@ function WorkflowPageInner() {
   const [copied, setCopied] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
   const abortRef = useRef<(() => void) | null>(null);
 
   // Redirect if neither a live prompt nor a saved task_id is present
@@ -165,7 +167,26 @@ function WorkflowPageInner() {
     }, 0);
 
     return () => { clearTimeout(t); abortRef.current?.(); };
-  }, [prompt, taskId, handleEvent, handleError]);
+  }, [prompt, taskId, retryKey, handleEvent, handleError]);
+
+  const isRunning = ["planning", "discovering", "extracting", "critiquing", "validating"].includes(store.stage);
+
+  const handleCancel = () => {
+    abortRef.current?.();
+    abortRef.current = null;
+    const s = useWorkflowStore.getState();
+    s.setError("Workflow cancelled");
+    s.addLog({ stage: "error", agent: "Pipeline", message: "Workflow cancelled", level: "warning" });
+  };
+
+  const handleRetry = () => {
+    abortRef.current?.();
+    abortRef.current = null;
+    useWorkflowStore.getState().reset();
+    setShowResults(false);
+    setLoadError(null);
+    setRetryKey((key) => key + 1);
+  };
 
   const handleCopyJson = () => {
     if (store.validatedResult) {
@@ -187,10 +208,17 @@ function WorkflowPageInner() {
       >
         <div className="flex items-center gap-4">
           <button
-            onClick={() => router.push("/")}
-            className="flex items-center gap-2 text-sm text-text-secondary hover:text-cyan transition-colors"
+            onClick={() => router.back()}
+            aria-label="Go back"
+            title="Go back"
+            className="rounded-lg p-2 text-text-secondary hover:bg-elevated hover:text-cyan transition-colors"
           >
             <ArrowLeft className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => router.push("/")}
+            className="text-sm text-text-secondary hover:text-cyan transition-colors"
+          >
             New Query
           </button>
           <div className="h-4 w-px bg-border-subtle" />
@@ -201,6 +229,24 @@ function WorkflowPageInner() {
         </div>
 
         <div className="flex items-center gap-3">
+          {isRunning && (
+            <button
+              onClick={handleCancel}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono text-rose border border-rose/20 hover:bg-rose/10 transition-all"
+            >
+              <XCircle className="h-3.5 w-3.5" />
+              Stop
+            </button>
+          )}
+          {store.stage === "error" && prompt && !taskId && (
+            <button
+              onClick={handleRetry}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono text-amber border border-amber/20 hover:bg-amber/10 transition-all"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Retry
+            </button>
+          )}
           {store.stage === "complete" && (
             <motion.div
               initial={{ opacity: 0, scale: 0.8 }}
@@ -218,7 +264,10 @@ function WorkflowPageInner() {
                 )}
                 {copied ? "Copied!" : "Copy JSON"}
               </button>
-              <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono bg-cyan/10 border border-cyan/20 text-cyan hover:bg-cyan/20 transition-all">
+              <button
+                onClick={() => downloadCsv(recordsToCsv(store.validatedResult?.clean_records || []), "dataforge-results.csv")}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono bg-cyan/10 border border-cyan/20 text-cyan hover:bg-cyan/20 transition-all"
+              >
                 <Download className="h-3.5 w-3.5" />
                 Export CSV
               </button>
