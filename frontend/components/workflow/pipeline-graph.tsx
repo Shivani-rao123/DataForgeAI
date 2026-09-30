@@ -106,11 +106,11 @@ function AnimatedEdge({
 const edgeTypes = { animated: AnimatedEdge };
 
 export function PipelineGraph() {
-  const { stage, activeAgentIndex, spec, validatedResult, extractionResults } = useWorkflowStore();
+ const { stage, activeAgentIndex, spec, resolvedSpec, validatedResult, extractionResults } = useWorkflowStore();
 
   const agentConfigs = useMemo(
     () => [
-      { id: "planner", label: "Planner", agent: "Groq LLM", icon: "brain", description: "Decomposes prompt into workflow spec" },
+      { id: "planner", label: "Planner", agent: "Gemini + Groq", icon: "brain", description: "Decomposes prompt into workflow spec" },
       { id: "discovery", label: "Source Discovery", agent: "Tavily API", icon: "search", description: "Resolves queries to real URLs" },
       { id: "extraction", label: "Extraction", agent: "LLM + Trafilatura", icon: "database", description: "Fetches pages, extracts records" },
       { id: "critic", label: "Critic", agent: "Self-Healing", icon: "shield", description: "Monitors quality, heals failures" },
@@ -132,8 +132,8 @@ export function PipelineGraph() {
           stats:
             i === 0 && spec
               ? `${spec.sources.length} sources`
-              : i === 1 && spec
-                ? `${spec.fields.length} fields`
+              : i === 1 && resolvedSpec
+                ? `${resolvedSpec.sources.reduce((a, s) => a + s.resolved.length, 0)} URLs`
                 : i === 2 && extractionResults.length > 0
                   ? `${extractionResults.reduce((a, r) => a + r.records.length, 0)} records`
                   : i === 4 && validatedResult
@@ -141,23 +141,20 @@ export function PipelineGraph() {
                     : undefined,
         },
       })),
-    [agentConfigs, stage, activeAgentIndex, spec, validatedResult, extractionResults]
+    [agentConfigs, stage, activeAgentIndex, spec, resolvedSpec, validatedResult, extractionResults]
   );
 
   const edgeLabels = useMemo(() => {
     if (!spec) return ["", "", "", ""];
     return [
       `${spec.sources.length} queries`,
-      spec.sources.reduce((a, s) => {
-        const count = "resolved" in s ? (s as { resolved?: unknown[] }).resolved?.length || 0 : 0;
-        return a + count;
-      }, 0) + " URLs",
+      resolvedSpec ? resolvedSpec.sources.reduce((a, s) => a + s.resolved.length, 0) + " URLs" : "URLs",
       extractionResults.length > 0
         ? `${extractionResults.reduce((a, r) => a + r.records.length, 0)} raw`
         : "records",
       validatedResult ? `${validatedResult.clean_records.length} clean` : "validated",
     ];
-  }, [spec, extractionResults, validatedResult]);
+  }, [spec, resolvedSpec, extractionResults, validatedResult]);
 
   const edges: Edge[] = useMemo(
     () =>

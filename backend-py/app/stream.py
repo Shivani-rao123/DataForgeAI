@@ -114,7 +114,7 @@ async def _run_pipeline_stream(prompt: str):
     try:
         from app.db.persist import persist_workflow_run
 
-        persisted_task_id = persist_workflow_run(prompt, spec, resolved_spec, extraction_results, validated)
+        persisted_task_id = persist_workflow_run(prompt, spec, resolved_spec, healed_results, validated)
     except Exception as err:  # noqa: BLE001 — a DB hiccup shouldn't break a completed run
         persist_error = str(err)
         print(f"[stream] persist failed (run still shown in UI, just not saved to history): {err}")

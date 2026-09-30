@@ -43,7 +43,20 @@ def _domain(url: str) -> str:
         return url
 
 
+VALIDATION_BATCH_SIZE = 15
+
+
 def _check_validation_rules(records: list, validation_rules: list) -> list:
+    issues: list = []
+    for start in range(0, len(records), VALIDATION_BATCH_SIZE):
+        batch = records[start:start + VALIDATION_BATCH_SIZE]
+        for issue in _check_validation_rules_batch(batch, validation_rules):
+            issue.record_index += start  # convert batch-local index to global index
+            issues.append(issue)
+    return issues
+
+
+def _check_validation_rules_batch(records: list, validation_rules: list) -> list:
     """One batched LLM call checks every record against every rule at once — same
     pattern as extraction.py's filter_relevant, so this never scales with record
     count and can't reintroduce the per-record rate-limit problem we hit earlier."""
@@ -68,7 +81,7 @@ A record with a null/missing field it needs is a violation UNLESS the rule only 
 when that field is present. If every record passes, return {{"violations": []}}."""
 
     try:
-        text = chat([{"role": "user", "content": prompt}], max_tokens=800)
+        text = chat([{"role": "user", "content": prompt}], max_tokens=2000)
         cleaned = re.sub(r"```json|```", "", text).strip()
         parsed = json.loads(cleaned)
         violations = parsed.get("violations", [])
@@ -95,6 +108,13 @@ def validate_and_dedupe(records: list, validation_rules: list) -> ValidatedResul
                 issues.append(ValidationIssue(record_index=i, field=field, reason=reason))
 
     issues.extend(_check_validation_rules(records, validation_rules))
+
+    # Attach real problems (rule violations, bad email/URL) to the record itself so the UI
+    # can flag the row. Plain "missing" is skipped: it would flag nearly every row.
+    for issue in issues:
+        if issue.reason != "missing" and 0 <= issue.record_index < len(records):
+            label = issue.reason if issue.field == "_rule" else f"{issue.field}: {issue.reason}"
+            records[issue.record_index].flags.append(label)
 
     merges: list = []
     dropped: set = set()

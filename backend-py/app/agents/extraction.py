@@ -172,7 +172,19 @@ def _ground(data: dict, page_text: str) -> dict:
     return out
 
 
+FILTER_BATCH_SIZE = 15
+
+
 def filter_relevant(records: list, goal: str) -> list:
+    if not goal or len(records) <= FILTER_BATCH_SIZE:
+        return _filter_relevant_batch(records, goal)
+    kept: list = []
+    for start in range(0, len(records), FILTER_BATCH_SIZE):
+        kept.extend(_filter_relevant_batch(records[start:start + FILTER_BATCH_SIZE], goal))
+    return kept
+
+
+def _filter_relevant_batch(records: list, goal: str) -> list:
     """One small LLM call per source. Classifies each record against the goal and
     KEEPS anything that isn't a clear contradiction (keep-if-unsure): records whose
     criterion isn't stated are kept and tagged match_status="unconfirmed"."""
@@ -206,6 +218,7 @@ Records:
         verdict = verdicts.get(i)
         status = verdict.get("status") if verdict else None
         if status == "contradicts":
+            print(f"[extraction] dropped: {str(record.data)[:90]} -> {(verdict.get('reason') or '')[:80]}")
             continue  # only clear contradictions are dropped
         if status == "unstated":
             record.match_status = "unconfirmed"

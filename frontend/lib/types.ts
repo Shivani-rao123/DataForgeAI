@@ -35,6 +35,7 @@ export interface ExtractedRecord {
   citation_url: string;
   match_status?: "match" | "unconfirmed";
   match_reason?: string;
+  flags?: string[];
 }
 
 export interface SourceExtractionResult {

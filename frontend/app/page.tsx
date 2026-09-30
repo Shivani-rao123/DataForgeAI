@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { ParticleField } from "@/components/shared/particle-field";
@@ -23,6 +24,13 @@ export default function HomePage() {
       {/* Background layers */}
       <AuroraBackground />
       <ParticleField />
+
+      <Link
+        href="/dashboard"
+        className="absolute top-5 right-6 z-20 rounded-lg border border-border-subtle bg-elevated/70 px-3 py-1.5 text-xs font-mono text-text-secondary hover:text-cyan hover:border-cyan/30 transition-colors"
+      >
+        Dashboard →
+      </Link>
 
       {/* Content */}
       <div className="relative z-10 w-full px-6 flex flex-col items-center justify-center min-h-screen">

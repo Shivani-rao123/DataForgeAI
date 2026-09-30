@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { PlusCircle, History, Database, Sparkles } from "lucide-react";
+import { PlusCircle, History, Database, Sparkles, LayoutDashboard } from "lucide-react";
 
 const NAV_ITEMS = [
+  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "New Task", href: "/", icon: PlusCircle },
   { label: "History", href: "/history", icon: History },
   { label: "Datasets", href: "/datasets", icon: Database },

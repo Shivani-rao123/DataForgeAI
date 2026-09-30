@@ -8,11 +8,16 @@ Optional: GEMINI_MODEL (default gemini-2.5-flash), GROQ_MODEL (default openai/gp
 """
 import functools
 import os
+import time
 
 import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+
+GROQ_MAX_PROMPT_CHARS = int(os.environ.get("GROQ_MAX_PROMPT_CHARS", "8000"))
+GEMINI_COOLDOWN_SECONDS = int(os.environ.get("GEMINI_COOLDOWN_SECONDS", "120"))
+_gemini_blocked_until = 0.0
 
 
 def provider() -> str:
@@ -39,8 +44,32 @@ def _is_quota_exhausted(err: BaseException) -> bool:
     return "exceeded your current quota" in text or "perday" in text or "per day" in text or "quota exceeded" in text
 
 
+def _is_request_too_large(err: BaseException) -> bool:
+    text = str(err).lower()
+    return "413" in text or "request too large" in text or "request_too_large" in text
+
+
 def _should_retry_same_provider(err: BaseException) -> bool:
-    return _is_rate_limit_error(err) and not _is_quota_exhausted(err)
+    return _is_rate_limit_error(err) and not _is_quota_exhausted(err) and not _is_request_too_large(err)
+
+
+def _shrink_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    head = int(limit * 0.6)
+    return text[:head] + "\n[...]\n" + text[-(limit - head):]
+
+
+def _fit_messages(messages: list, limit: int) -> list:
+    total = sum(len(m["content"]) for m in messages)
+    if total <= limit:
+        return messages
+    longest = max(range(len(messages)), key=lambda i: len(messages[i]["content"]))
+    others = total - len(messages[longest]["content"])
+    budget = max(1000, limit - others)
+    fitted = list(messages)
+    fitted[longest] = {**messages[longest], "content": _shrink_text(messages[longest]["content"], budget)}
+    return fitted
 
 
 @functools.lru_cache(maxsize=1)
@@ -112,14 +141,27 @@ def _groq_with_retry(messages: list, max_tokens: int | None) -> str:
     return _groq_chat(messages, max_tokens)
 
 
+def _groq_fitted(messages: list, max_tokens: int | None) -> str:
+    limit = GROQ_MAX_PROMPT_CHARS
+    try:
+        return _groq_with_retry(_fit_messages(messages, limit), max_tokens)
+    except Exception as err:  # noqa: BLE001
+        if not _is_request_too_large(err):
+            raise
+        print(f"[llm] Groq 413 at {limit} chars; retrying with {limit // 2}")
+        return _groq_with_retry(_fit_messages(messages, limit // 2), max_tokens)
+
+
 def chat(messages: list, max_tokens: int | None = None) -> str:
-    """messages: [{"role": "system"|"user"|"assistant", "content": str}, ...] -> reply text.
-    Each provider retries with backoff on transient rate limits (429/503). If the primary
-    provider is Gemini and it fails (quota spent or errors persist), we fall back to Groq."""
+    global _gemini_blocked_until
     if provider() == "gemini":
+        if time.time() < _gemini_blocked_until:
+            return _groq_fitted(messages, max_tokens)
         try:
             return _gemini_with_retry(messages, max_tokens)
-        except Exception as err:  # noqa: BLE001 — fall back to the other provider
+        except Exception as err:  # noqa: BLE001
+            if _is_rate_limit_error(err):
+                _gemini_blocked_until = time.time() + GEMINI_COOLDOWN_SECONDS
             print(f"[llm] Gemini unavailable ({str(err)[:140]}); falling back to Groq")
-            return _groq_with_retry(messages, max_tokens)
-    return _groq_with_retry(messages, max_tokens)
+            return _groq_fitted(messages, max_tokens)
+    return _groq_fitted(messages, max_tokens)

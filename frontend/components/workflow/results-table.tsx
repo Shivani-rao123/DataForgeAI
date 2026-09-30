@@ -9,6 +9,7 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
+  AlertTriangle,
 } from "lucide-react";
 import type { ExtractedRecord } from "@/lib/types";
 
@@ -87,7 +88,7 @@ export function ResultsTable({ records }: { records: ExtractedRecord[] }) {
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-border-subtle bg-elevated/60">
-              <th className="px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-text-muted w-8">
+              <th className="px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-text-muted">
                 {/* match status */}
               </th>
               {columns.map((col) => (
@@ -132,10 +133,21 @@ export function ResultsTable({ records }: { records: ExtractedRecord[] }) {
                       className="cursor-help"
                     >
                       {record.match_status === "unconfirmed" ? (
-                        <ShieldQuestion className="h-3.5 w-3.5 text-amber" />
+                        <span className="inline-flex items-center gap-1 rounded border border-amber/30 bg-amber/10 px-1.5 py-0.5 text-[10px] font-mono text-amber whitespace-nowrap">
+                          <ShieldQuestion className="h-3 w-3" />
+                          Unconfirmed
+                        </span>
                       ) : (
-                        <ShieldCheck className="h-3.5 w-3.5 text-emerald" />
+                        <span className="inline-flex items-center gap-1 rounded border border-emerald/30 bg-emerald/10 px-1.5 py-0.5 text-[10px] font-mono text-emerald whitespace-nowrap">
+                          <ShieldCheck className="h-3 w-3" />
+                          Verified
+                        </span>
                       )}
+                    </span>
+                  )}
+                  {record.flags && record.flags.length > 0 && (
+                    <span title={record.flags.join("\n")} className="ml-1 inline-flex cursor-help align-middle">
+                      <AlertTriangle className="h-3.5 w-3.5 text-rose" />
                     </span>
                   )}
                 </td>

@@ -63,6 +63,7 @@ class ExtractedRecord(BaseModel):
     #   "unconfirmed" -> the request criterion isn't stated on the page (kept, not dropped)
     match_status: Literal["match", "unconfirmed"] = "match"
     match_reason: str = ""
+    flags: List[str] = Field(default_factory=list)  # validator warnings shown in the UI
 
 
 class SourceExtractionResult(BaseModel):
