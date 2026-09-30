@@ -33,6 +33,9 @@ class Task(Base):
     status = Column(String, default="pending")
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
+    error_code = Column(String, nullable=True)
+    error_message = Column(Text, nullable=True)
+    retry_of = Column(String(36), ForeignKey("tasks.id"), nullable=True)
 
     workflow = relationship("Workflow", back_populates="tasks")
     sources = relationship("Source", back_populates="task")

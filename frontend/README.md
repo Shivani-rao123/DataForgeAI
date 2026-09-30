@@ -1,36 +1,91 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# DataForge AI Frontend
 
-## Getting Started
+The DataForge AI frontend is a Next.js App Router application for submitting natural-language data requests, monitoring the agent pipeline, inspecting validated records, and exporting datasets.
 
-First, run the development server:
+See the repository [README](../README.md) for the complete architecture, backend setup, API reference, environment documentation, and production notes.
+
+## Stack
+
+- Next.js 16 and React 19
+- TypeScript
+- Tailwind CSS 4
+- Zustand for workflow state
+- Framer Motion for animation
+- React Flow for the pipeline graph
+- Lucide React for icons
+
+## Setup
+
+From this directory:
+
+```bash
+npm install
+```
+
+Create `.env.local`:
+
+```dotenv
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8000/api
+```
+
+Start the development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000). The backend must be running on port `8000` for planning, streaming, history, and dataset operations.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Commands
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run dev       # Start the development server
+npm run lint      # Run ESLint
+npx tsc --noEmit  # Check TypeScript without emitting files
+npm run build     # Create a production build
+npm run start     # Serve the production build
+```
 
-## Learn More
+## App Areas
 
-To learn more about Next.js, take a look at the following resources:
+| Route | Purpose |
+| --- | --- |
+| `/` | Create a new data collection workflow |
+| `/workflow` | View live agent progress and validated results |
+| `/dashboard` | View run statistics and recent workflows |
+| `/history` | Browse previously completed workflows |
+| `/datasets` | Inspect and export saved datasets |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Main Code Areas
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- `app/`: route pages and global styles
+- `components/landing/`: prompt entry experience
+- `components/layout/`: sidebar and application chrome
+- `components/workflow/`: graph, agent status, logs, and result table
+- `hooks/use-workflow-state.ts`: client-side workflow state
+- `lib/api.ts`: backend REST and SSE client
+- `lib/types.ts`: frontend representation of backend contracts
+- `lib/csv.ts`: dataset export helpers
 
-## Deploy on Vercel
+## Backend Connection
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The API client reads `NEXT_PUBLIC_API_URL`. For local development, start the backend from the repository root with:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+cd backend-py
+source venv/bin/activate
+uvicorn app.main:app --reload --port 8000
+```
+
+The workflow page consumes the backend SSE endpoint at `/api/workflows/run/stream` and supports task cancellation through `/api/tasks/{task_id}/cancel`.
+
+## Deployment
+
+Set `NEXT_PUBLIC_API_URL` to the deployed API URL, then run:
+
+```bash
+npm run build
+npm run start
+```
+
+Use HTTPS in production and configure the backend CORS allowlist to include the deployed frontend origin.

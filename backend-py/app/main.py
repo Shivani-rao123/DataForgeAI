@@ -4,13 +4,14 @@ Mirrors the Node version's routes: /api/workflows/plan and /api/workflows/discov
 plus /api/workflows/run which chains both through the LangGraph graph in one call.
 """
 import os
+from urllib.parse import quote
 from dotenv import load_dotenv
 
 load_dotenv()  # must run before any agent module reads os.environ for API keys
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.agents.planner import plan_workflow
 from app.agents.source_discovery import discover_sources
@@ -60,7 +61,7 @@ app.add_middleware(
 
 
 class PlanRequest(BaseModel):
-    prompt: str
+    prompt: str = Field(min_length=1, max_length=8000)
 
 
 class DiscoverRequest(BaseModel):
@@ -73,11 +74,16 @@ def health():
 
 
 @app.get("/api/tasks")
-def list_tasks_route():
+def list_tasks_route(
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    status: str | None = None,
+    search: str | None = None,
+):
     from app.db.persist import list_tasks
 
     try:
-        return {"tasks": list_tasks()}
+        return {"tasks": list_tasks(limit=limit, offset=offset, status=status, search=search)}
     except Exception as err:
         raise HTTPException(status_code=500, detail=f"Could not list tasks: {err}") from err
 
@@ -93,6 +99,35 @@ def get_task_route(task_id: str):
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
+
+
+@app.get("/api/tasks/{task_id}/events")
+def get_task_events_route(task_id: str):
+    from app.db.persist import list_task_events
+
+    try:
+        events = list_task_events(task_id)
+    except Exception as err:
+        raise HTTPException(status_code=500, detail="Could not load task events") from err
+    return {"task_id": task_id, "events": events}
+
+
+@app.post("/api/tasks/{task_id}/retry", status_code=202)
+def retry_task_route(task_id: str):
+    from app.db.persist import create_task, get_task
+
+    original = get_task(task_id)
+    if original is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    try:
+        retry_id = create_task(original["prompt"], retry_of=task_id)
+    except Exception as err:
+        raise HTTPException(status_code=500, detail="Could not create retry task") from err
+    return {
+        "task_id": retry_id,
+        "prompt": original["prompt"],
+        "stream_url": f"/api/workflows/run/stream?prompt={quote(original['prompt'])}&task_id={retry_id}",
+    }
 
 @app.on_event("startup")
 def init_database():

@@ -5,24 +5,84 @@ for the History page (list_tasks / get_task).
 from datetime import datetime
 
 from app.db.database import get_session
-from app.db.models import MergeDecisionModel, Record, Source, Task, Workflow
+from app.db.models import AgentEvent, MergeDecisionModel, Record, Source, Task, Workflow
 
 
-def persist_workflow_run(prompt, spec, resolved_spec, extraction_results, validated_result) -> str:
-    """Writes one full run to the DB and returns the new task_id."""
+def create_task(prompt: str, retry_of: str | None = None) -> str:
+    """Create a task before pipeline execution starts."""
     with get_session() as db:
-        workflow = Workflow(prompt=prompt, spec_json=spec.model_dump())
+        workflow = Workflow(prompt=prompt, spec_json={})
         db.add(workflow)
-        db.flush()  # assigns workflow.id before we reference it
-
+        db.flush()
         task = Task(
             workflow_id=workflow.id,
-            status="done",
+            status="running",
             started_at=datetime.utcnow(),
-            completed_at=datetime.utcnow(),
+            retry_of=retry_of,
         )
         db.add(task)
         db.flush()
+        return task.id
+
+
+def update_task_status(
+    task_id: str,
+    status: str,
+    error_code: str | None = None,
+    error_message: str | None = None,
+) -> None:
+    """Update a task's lifecycle state without exposing internal errors to clients."""
+    with get_session() as db:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            return
+        task.status = status
+        task.error_code = error_code
+        task.error_message = error_message
+        if status in {"done", "failed", "cancelled"}:
+            task.completed_at = datetime.utcnow()
+
+
+def record_agent_event(
+    task_id: str,
+    agent_name: str,
+    status: str,
+    message: str | None = None,
+) -> None:
+    with get_session() as db:
+        db.add(
+            AgentEvent(
+                task_id=task_id,
+                agent_name=agent_name,
+                status=status,
+                message=message,
+            )
+        )
+
+
+def persist_workflow_run(prompt, spec, resolved_spec, extraction_results, validated_result, task_id: str | None = None) -> str:
+    """Write a completed run, updating the task created at stream start."""
+    with get_session() as db:
+        task = db.query(Task).filter(Task.id == task_id).first() if task_id else None
+        if task:
+            workflow = db.query(Workflow).filter(Workflow.id == task.workflow_id).first()
+            workflow.spec_json = spec.model_dump()
+            task.status = "done"
+            task.error_code = None
+            task.error_message = None
+            task.completed_at = datetime.utcnow()
+        else:
+            workflow = Workflow(prompt=prompt, spec_json=spec.model_dump())
+            db.add(workflow)
+            db.flush()
+            task = Task(
+                workflow_id=workflow.id,
+                status="done",
+                started_at=datetime.utcnow(),
+                completed_at=datetime.utcnow(),
+            )
+            db.add(task)
+            db.flush()
 
         # Flattened in the same order validate_and_dedupe saw them, so merges'
         # kept_index/dropped_index line up with this list.
@@ -68,16 +128,23 @@ def persist_workflow_run(prompt, spec, resolved_spec, extraction_results, valida
         return task.id
 
 
-def list_tasks(limit: int = 50) -> list[dict]:
-    """Newest-first summary of past runs, for the History page list view."""
+def list_tasks(
+    limit: int = 50,
+    offset: int = 0,
+    status: str | None = None,
+    search: str | None = None,
+) -> list[dict]:
+    """Newest-first task summaries with pagination and basic filtering."""
     with get_session() as db:
-        tasks = (
+        query = (
             db.query(Task, Workflow)
             .join(Workflow, Task.workflow_id == Workflow.id)
-            .order_by(Task.started_at.desc())
-            .limit(limit)
-            .all()
         )
+        if status:
+            query = query.filter(Task.status == status)
+        if search:
+            query = query.filter(Workflow.prompt.ilike(f"%{search}%"))
+        tasks = query.order_by(Task.started_at.desc()).offset(offset).limit(min(limit, 100)).all()
         out = []
         for task, workflow in tasks:
             record_count = db.query(Record).filter(Record.task_id == task.id, Record.is_duplicate == False).count()  # noqa: E712
@@ -90,9 +157,29 @@ def list_tasks(limit: int = 50) -> list[dict]:
                     if (task.started_at or task.completed_at)
                     else None,
                     "record_count": record_count,
+                    "error_code": task.error_code,
                 }
             )
         return out
+
+
+def list_task_events(task_id: str) -> list[dict]:
+    with get_session() as db:
+        events = (
+            db.query(AgentEvent)
+            .filter(AgentEvent.task_id == task_id)
+            .order_by(AgentEvent.created_at.asc())
+            .all()
+        )
+        return [
+            {
+                "agent": event.agent_name,
+                "status": event.status,
+                "message": event.message,
+                "created_at": event.created_at.isoformat() if event.created_at else None,
+            }
+            for event in events
+        ]
 
 
 def get_task(task_id: str) -> dict | None:
@@ -129,6 +216,8 @@ def get_task(task_id: str) -> dict | None:
             "task_id": task.id,
             "prompt": workflow.prompt,
             "status": task.status,
+            "error_code": task.error_code,
+            "error_message": task.error_message,
             "created_at": (task.started_at or task.completed_at).isoformat()
             if (task.started_at or task.completed_at)
             else None,

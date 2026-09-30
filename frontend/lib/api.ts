@@ -79,12 +79,16 @@ export function connectPipelineStream(
   prompt: string,
   onEvent: (event: string, data: Record<string, unknown>) => void,
   onComplete: () => void,
-  onError: (error: Error) => void
+  onError: (error: Error) => void,
+  taskId?: string
 ): () => void {
-  const url = `${API_BASE}/workflows/run/stream?prompt=${encodeURIComponent(prompt)}`;
+  const params = new URLSearchParams({ prompt });
+  if (taskId) params.set("task_id", taskId);
+  const url = `${API_BASE}/workflows/run/stream?${params.toString()}`;
   const es = new EventSource(url);
 
   const knownEvents = [
+    "pipeline:start", "pipeline:cancelled",
     "planner:start", "planner:done",
     "discovery:start", "discovery:done",
     "extraction:start", "extraction:done",
@@ -98,7 +102,7 @@ export function connectPipelineStream(
       try {
         const data = JSON.parse(e.data);
         onEvent(eventName, data);
-        if (eventName === "pipeline:complete") {
+        if (eventName === "pipeline:complete" || eventName === "pipeline:cancelled") {
           onComplete();
           es.close();
         }
@@ -121,6 +125,17 @@ export function connectPipelineStream(
   };
 
   return () => es.close();
+}
+
+export async function cancelTask(taskId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}/cancel`, { method: "POST" });
+  if (!res.ok) throw new Error(`Cancel failed: ${res.status}`);
+}
+
+export async function retryTask(taskId: string): Promise<{ task_id: string; prompt: string }> {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}/retry`, { method: "POST" });
+  if (!res.ok) throw new Error(`Retry failed: ${res.status}`);
+  return res.json();
 }
 
 export async function listTasks(): Promise<TaskSummary[]> {
