@@ -11,7 +11,7 @@ import { AgentStatusStrip } from "@/components/workflow/agent-status-strip";
 import { GradientText } from "@/components/shared/gradient-text";
 import { AnimatedCounter } from "@/components/shared/animated-counter";
 import { useWorkflowStore } from "@/hooks/use-workflow-state";
-import { connectPipelineStream, getTask } from "@/lib/api";
+import { cancelTask, connectPipelineStream, getTask } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { downloadCsv, recordsToCsv } from "@/lib/csv";
 import type { WorkflowSpec, ResolvedWorkflowSpec, SourceExtractionResult, ValidatedResult } from "@/lib/types";
@@ -36,6 +36,7 @@ function WorkflowPageInner() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
   const abortRef = useRef<(() => void) | null>(null);
+  const liveTaskIdRef = useRef<string | null>(taskId || null);
 
   // Redirect if neither a live prompt nor a saved task_id is present
   useEffect(() => {
@@ -72,6 +73,10 @@ function WorkflowPageInner() {
     (event: string, data: Record<string, unknown>) => {
       const s = useWorkflowStore.getState();
       switch (event) {
+        case "pipeline:start":
+          liveTaskIdRef.current = data.task_id as string;
+          s.setTaskId(data.task_id as string);
+          break;
         case "planner:start":
           s.setStage("planning");
           s.setProgress(10);
@@ -141,6 +146,10 @@ function WorkflowPageInner() {
           s.setProgress(100);
           s.addLog({ stage: "complete", agent: "Pipeline", message: "Pipeline complete!", level: "success" });
           break;
+        case "pipeline:cancelled":
+          s.setError("Workflow cancelled");
+          s.addLog({ stage: "error", agent: "Pipeline", message: "Workflow cancelled", level: "warning" });
+          break;
         case "pipeline:error":
           s.setError(data.error as string);
           s.addLog({ stage: "error", agent: "Pipeline", message: (data.error as string) || "Unknown error", level: "error" });
@@ -163,7 +172,7 @@ function WorkflowPageInner() {
     useWorkflowStore.getState().setPrompt(prompt);
     // Delay so React StrictMode's dev-only mount/unmount/mount only opens one connection.
     const t = setTimeout(() => {
-      abortRef.current = connectPipelineStream(prompt, handleEvent, () => {}, handleError);
+      abortRef.current = connectPipelineStream(prompt, handleEvent, () => {}, handleError, taskId || undefined);
     }, 0);
 
     return () => { clearTimeout(t); abortRef.current?.(); };
@@ -171,7 +180,15 @@ function WorkflowPageInner() {
 
   const isRunning = ["planning", "discovering", "extracting", "critiquing", "validating"].includes(store.stage);
 
-  const handleCancel = () => {
+  const handleCancel = async () => {
+    const activeTaskId = liveTaskIdRef.current;
+    if (activeTaskId) {
+      try {
+        await cancelTask(activeTaskId);
+      } catch (err) {
+        useWorkflowStore.getState().addLog({ stage: "error", agent: "Pipeline", message: err instanceof Error ? err.message : "Could not cancel workflow", level: "error" });
+      }
+    }
     abortRef.current?.();
     abortRef.current = null;
     const s = useWorkflowStore.getState();
