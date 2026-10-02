@@ -9,7 +9,6 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
-  AlertTriangle,
 } from "lucide-react";
 import type { ExtractedRecord } from "@/lib/types";
 
@@ -126,9 +125,10 @@ export function ResultsTable({ records }: { records: ExtractedRecord[] }) {
                   {record.match_status && (
                     <span
                       title={
-                        record.match_status === "unconfirmed"
+                        (record.match_status === "unconfirmed"
                           ? record.match_reason || "Could not be fully confirmed against the source"
-                          : "Every field verified against its source"
+                          : "Every field verified against its source") +
+                        (record.flags && record.flags.length > 0 ? "\n\nNotes:\n" + record.flags.join("\n") : "")
                       }
                       className="cursor-help"
                     >
@@ -143,11 +143,6 @@ export function ResultsTable({ records }: { records: ExtractedRecord[] }) {
                           Verified
                         </span>
                       )}
-                    </span>
-                  )}
-                  {record.flags && record.flags.length > 0 && (
-                    <span title={record.flags.join("\n")} className="ml-1 inline-flex cursor-help align-middle">
-                      <AlertTriangle className="h-3.5 w-3.5 text-rose" />
                     </span>
                   )}
                 </td>

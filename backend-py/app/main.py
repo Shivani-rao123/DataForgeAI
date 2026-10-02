@@ -129,6 +129,7 @@ def retry_task_route(task_id: str):
         "stream_url": f"/api/workflows/run/stream?prompt={quote(original['prompt'])}&task_id={retry_id}",
     }
 
+
 @app.on_event("startup")
 def init_database():
     """Creates the Postgres/SQLite tables on first run if they don't exist yet."""
@@ -136,17 +137,14 @@ def init_database():
         init_db()
         print("Database ready.")
     except Exception as err:
-        print(f"DB init failed (non-fatal — history/persistence will be unavailable): {err}")
+        print(f"DB init failed (non-fatal - history/persistence will be unavailable): {err}")
 
 
 @app.on_event("startup")
 def warm_up_llm():
-    """
-    The first Groq/LangChain call in a fresh process pays a one-time ~60s
-    cold-start cost (unrelated to Groq itself — a lazy init inside
-    langchain-core). Absorb that cost here at server startup instead of
-    on a real user's first request.
-    """
+    """Opt-in only: set LLM_WARMUP=1 in .env to pre-load the LLM client at startup."""
+    if os.environ.get("LLM_WARMUP") != "1":
+        return
     try:
         plan_workflow("warmup")
         print("LLM warm-up complete.")
@@ -191,7 +189,7 @@ def run(req: PlanRequest):
             result["extraction_results"],
             result["validated_result"],
         )
-    except Exception as err:  # noqa: BLE001 — a DB hiccup shouldn't break the response
+    except Exception as err:  # noqa: BLE001 - a DB hiccup shouldn't break the response
         persist_error = str(err)
 
     return {

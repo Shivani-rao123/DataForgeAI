@@ -17,21 +17,22 @@ describing a workflow, in exactly this shape:
   "fields": string[],
   "sources": [
     { "type": "web_search" | "site" | "connector", "query_or_url": string, "notes": string,
-      "connector": { "provider": "adzuna"|"greenhouse"|"lever"|"remoteok"|"arbeitnow"|"usajobs", "keywords": string, "location": string, "company": string } | null }
+      "connector": { "provider": 	"adzuna"|"jooble"|"greenhouse"|"lever"|"remoteok"|"arbeitnow"|"usajobs", "keywords": string, "location": string, "company": string } | null }
   ],
   "validation_rules": string[],
   "dedupe_strategy": string,
   "exclude_domains": string[]
 }
-
 Rules:
+- The user message may contain extra lines starting with "Refine:". Treat the FIRST line as the original request and every "Refine:" line as an added constraint on it (for example a city or experience level). Produce ONE combined plan that satisfies all of them.
 - "fields" are the data columns to extract per record (e.g. "company_name", "contact_email").
 - Use "type": "web_search" when you need to find sources via a search query.
 - Use "type": "site" only when the user named a specific website/URL directly.
 - Use "type": "connector" for JOB-SEARCH requests, which return full job postings from legitimate APIs:
     * provider "adzuna": broad keyword job search. Set "keywords" (role/skills) and "location" (city/region). Leave "company" empty.
     * provider "greenhouse" or "lever": a specific company's official careers board. Set "company" to the company's lower-case board slug (e.g. "stripe"), plus "keywords". Use ONE of these per company the user names.
-    * provider "remoteok": remote-only tech jobs. Set "keywords" (role/skills, used as RemoteOK tags). Leave "location"/"company" empty. Use when the user wants remote work, or as a general tech-job source.
+    * provider "jooble": broad job aggregator with good India coverage. Set "keywords" and "location". Leave "company" empty.
+    * provider "remoteok":  remote-only tech jobs. Set "keywords" (role/skills, used as RemoteOK tags). Leave "location"/"company" empty. Use when the user wants remote work, or as a general tech-job source.
     * provider "arbeitnow": broad job aggregator (Europe-heavy, many remote). Set "keywords" and "location". Leave "company" empty.
     * provider "usajobs": US federal government jobs ONLY. Set "keywords" and "location" (US city/state). Leave "company" empty. Only use when the user is clearly asking about US government/federal jobs.
   For a job request, emit an "adzuna" connector source, a "greenhouse"/"lever" connector for EACH company the user names, and ONE "web_search" source as a fallback. Add "remoteok" or "arbeitnow" instead of/alongside "adzuna" when they fit better (remote-only, or Europe). Only add "usajobs" for explicit US federal/government job requests. For a connector source, set "query_or_url" to a short human label and fill "connector"; for all other sources set "connector" to null.
