@@ -11,6 +11,17 @@ import {
   ArrowDown,
 } from "lucide-react";
 import type { ExtractedRecord } from "@/lib/types";
+import { RecordDrawer } from "./record-drawer";
+
+function confidenceOf(r: ExtractedRecord): number {
+  const vals = Object.values(r.data);
+  const fill = vals.length ? vals.filter(Boolean).length / vals.length : 0;
+  const match = r.match_status === "match" ? 1 : 0;
+  const cite = r.citation_snippet ? 1 : 0;
+  const flags = Math.min(r.flags?.length ?? 0, 3);
+  const score = 0.5 * fill + 0.4 * match + 0.1 * cite - 0.1 * flags;
+  return Math.round(Math.max(0, Math.min(1, score)) * 100);
+}
 
 function isUrlValue(value: string | null): value is string {
   return typeof value === "string" && /^https?:\/\//i.test(value);
@@ -28,6 +39,10 @@ export function ResultsTable({ records }: { records: ExtractedRecord[] }) {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [statusFilter, setStatusFilter] = useState<"all" | "match" | "unconfirmed">("all");
+  const [hasEmailOnly, setHasEmailOnly] = useState(false);
+  const [minScore, setMinScore] = useState(0);
+  const [selected, setSelected] = useState<ExtractedRecord | null>(null);
 
   const columns = useMemo(() => {
     const cols: string[] = [];
@@ -42,6 +57,13 @@ export function ResultsTable({ records }: { records: ExtractedRecord[] }) {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     let rows = records;
+    if (statusFilter !== "all") rows = rows.filter((r) => r.match_status === statusFilter);
+    if (hasEmailOnly) {
+      rows = rows.filter((r) =>
+        Object.entries(r.data).some(([k, v]) => k.toLowerCase().includes("email") && v)
+      );
+    }
+    if (minScore > 0) rows = rows.filter((r) => confidenceOf(r) >= minScore);
     if (q) {
       rows = rows.filter((r) => {
         const haystack = [...Object.values(r.data), r.citation_url, r.match_reason]
@@ -60,7 +82,7 @@ export function ResultsTable({ records }: { records: ExtractedRecord[] }) {
       });
     }
     return rows;
-  }, [records, search, sortKey, sortDir]);
+  }, [records, search, sortKey, sortDir, statusFilter, hasEmailOnly, minScore]);
 
   const toggleSort = (col: string) => {
     if (sortKey === col) {
@@ -73,6 +95,37 @@ export function ResultsTable({ records }: { records: ExtractedRecord[] }) {
 
   return (
     <div className="flex flex-col gap-3">
+      <RecordDrawer
+        record={selected}
+        score={selected ? confidenceOf(selected) : 0}
+        onClose={() => setSelected(null)}
+      />
+      <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as "all" | "match" | "unconfirmed")}
+          className="rounded-lg bg-elevated border border-border-subtle px-2 py-1.5 text-text-primary"
+        >
+          <option value="all">All status</option>
+          <option value="match">Verified</option>
+          <option value="unconfirmed">Unconfirmed</option>
+        </select>
+        <select
+          value={minScore}
+          onChange={(e) => setMinScore(Number(e.target.value))}
+          className="rounded-lg bg-elevated border border-border-subtle px-2 py-1.5 text-text-primary"
+        >
+          <option value={0}>Any score</option>
+          <option value={40}>Score 40%+</option>
+          <option value={60}>Score 60%+</option>
+          <option value={80}>Score 80%+</option>
+        </select>
+        <label className="flex items-center gap-1.5 text-text-secondary cursor-pointer">
+          <input type="checkbox" checked={hasEmailOnly} onChange={(e) => setHasEmailOnly(e.target.checked)} />
+          Has email
+        </label>
+      </div>
+
       <div className="relative max-w-xs">
         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
         <input
@@ -111,6 +164,9 @@ export function ResultsTable({ records }: { records: ExtractedRecord[] }) {
                 </th>
               ))}
               <th className="px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-text-muted">
+                Score
+              </th>
+              <th className="px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-text-muted">
                 Source
               </th>
             </tr>
@@ -119,7 +175,11 @@ export function ResultsTable({ records }: { records: ExtractedRecord[] }) {
             {filtered.map((record, i) => (
               <tr
                 key={i}
-                className="border-b border-border-subtle/50 last:border-0 hover:bg-elevated/40 transition-colors"
+                onClick={(e) => {
+                  if ((e.target as HTMLElement).closest("a")) return;
+                  setSelected(record);
+                }}
+                className="border-b border-border-subtle/50 last:border-0 hover:bg-elevated/40 transition-colors cursor-pointer"
               >
                 <td className="px-3 py-2">
                   {record.match_status && (
@@ -172,6 +232,9 @@ export function ResultsTable({ records }: { records: ExtractedRecord[] }) {
                     </td>
                   );
                 })}
+                <td className="px-3 py-2 font-mono text-text-secondary">
+                  {confidenceOf(record)}%
+                </td>
                 <td className="px-3 py-2">
                   {record.citation_url && (
                     <a
@@ -179,7 +242,7 @@ export function ResultsTable({ records }: { records: ExtractedRecord[] }) {
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-cyan/60 hover:text-cyan transition-colors"
-                      title="Open source page"
+                      title={`Open source page${record.citation_snippet ? "\n\n“" + record.citation_snippet + "”" : ""}`}
                     >
                       <ExternalLink className="h-3.5 w-3.5" />
                     </a>

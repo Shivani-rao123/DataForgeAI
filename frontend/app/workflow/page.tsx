@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, ArrowUp, Download, Copy, Check, Terminal, XCircle, RotateCcw } from "lucide-react";
 import { ResultsTable } from "@/components/workflow/results-table";
+import { InsightsPanel } from "@/components/workflow/insights-panel";
+import { SourcesPanel } from "@/components/workflow/sources-panel";
 import { PipelineGraph } from "@/components/workflow/pipeline-graph";
 import { LiveLogFeed } from "@/components/workflow/live-log-feed";
 import { AgentStatusStrip } from "@/components/workflow/agent-status-strip";
@@ -406,7 +408,9 @@ function WorkflowPageInner() {
                 </span>
               </div>
 
+              <InsightsPanel records={store.validatedResult.clean_records} />
               <ResultsTable records={store.validatedResult.clean_records} />
+              <SourcesPanel />
             </div>
           </motion.div>
         )}

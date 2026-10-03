@@ -12,6 +12,7 @@ from rapidfuzz import fuzz
 from urllib.parse import urljoin
 
 from app.llm import chat, provider
+from app.robots import is_allowed
 from app.agents.freshness import check_links, find_deadline, min_years_required, posting_status
 from app.schemas import ExtractedRecord, ResolvedSource, SourceExtractionResult
 
@@ -274,8 +275,10 @@ Records:
         verdicts = {v["index"]: v for v in parsed.get("verdicts", []) if isinstance(v.get("index"), int)}
     except Exception as err:  # noqa: BLE001 — never lose data because the filter failed
         print(f"[extraction] relevance filter skipped: {err}")
+        for r in records:
+            r.match_status = "unconfirmed"
+            r.match_reason = "Relevance check skipped (AI rate-limited)"
         return records
-
     kept: list = []
     for i, record in enumerate(records):
         verdict = verdicts.get(i)
@@ -435,6 +438,10 @@ def extract_from_source(resolved_source: ResolvedSource, fields: list, goal: str
     errors: list = []
 
     for result in resolved_source.resolved:
+        if not is_allowed(result.url):
+            errors.append(f"{result.url}: skipped, disallowed by robots.txt")
+            print(f"[extraction] ROBOTS BLOCKED {result.url}")
+            continue
         try:
             page_text = get_page_text(result)
         except Exception as err:  # noqa: BLE001

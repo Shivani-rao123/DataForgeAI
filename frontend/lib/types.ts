@@ -1,7 +1,7 @@
 /* ── Backend API Types (matches backend-py/app/schemas.py) ── */
 
 export interface SourceSpec {
-  type: "web_search" | "site";
+  type: "web_search" | "site" | "connector";
   query_or_url: string;
   notes: string;
 }

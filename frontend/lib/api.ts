@@ -1,3 +1,4 @@
+
 import type { PlanResponse, RunResponse, WorkflowSpec, TaskSummary, TaskDetail, ResumeProfile } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -117,11 +118,9 @@ export function connectPipelineStream(
   }
 
   es.onerror = () => {
-    // EventSource auto-retries; only error on closed connections
-    if (es.readyState === EventSource.CLOSED) {
-      onError(new Error("SSE connection closed"));
-      es.close();
-    }
+    // Never let EventSource auto-reconnect: each reconnect would restart the whole pipeline.
+    es.close();
+    onError(new Error("Connection to the server was interrupted. Use Retry."));
   };
 
   return () => es.close();

@@ -41,6 +41,7 @@ Rules:
 - For such requests emit 4 "web_search" sources. Each query must find pages that LIST or describe the actual entities (e.g. "Karnataka engineering college techfest 2026 title sponsor", "Bangalore college fest sponsors list 2025", "KLE Technological University techfest sponsors"), each from a different angle (different city, college type, or year). NEVER write queries that find guides or advice ("how to get sponsorship", "tips", "template", "email format").
 - For such requests set "exclude_domains" to ["medium.com", "scribd.com", "quora.com", "pinterest.com", "youtube.com", "instagram.com", "facebook.com"] plus any the user named.
 - Keep "fields" to 4-6 columns describing ONE entity type per record.
+- If the request names a place (city, state, country), ALWAYS include a "city" or "state" field so records can be checked against it.
 - Keep "sources" to 2-4 entries — focused, not exhaustive. EXCEPTION: a job request that lists several roles may use up to 6 sources.
 - JOB KEYWORDS: for adzuna/jooble/arbeitnow/remoteok, "keywords" must be ONLY a job title of 1-3 words (e.g. "Java Developer"). NEVER put skills, tools, or experience words such as "fresher", "entry level" or "junior" in "keywords" - long keyword strings match nothing. Experience level and skills are applied later by a separate filter.
 - MULTIPLE ROLES: when the request lists several roles, emit one "jooble" source AND one "adzuna" source per role (max 3 roles), each with a different title in "keywords", all using the first listed city as "location".
