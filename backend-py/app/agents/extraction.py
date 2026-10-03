@@ -82,7 +82,7 @@ NEVER copy wording from the goal into a value. Every value must be copied exactl
         else ""
     )
     return f"""You are the Extraction Agent in a data-collection platform.
-{goal_block}Given the page text below, extract every distinct record you can find, using exactly
+{goal_block}Given the page text below, extract EVERY distinct record you can find (all rows, cards and list items, not just the first), using exactly
 these fields: {field_list}.
 Only use values that appear in the page text. Never guess or invent a value; use null instead.
 For each record, also include "citation_snippet": the exact short quote (under 25 words)
@@ -186,6 +186,14 @@ _SENIOR_TITLE_RE = re.compile(
     re.IGNORECASE,
 )
 _JUNIOR_TITLE_RE = re.compile(r"trainee|intern|graduate|assistant|associate|junior|fresher", re.IGNORECASE)
+_JOB_GOAL_RE = re.compile(
+    r"\b(jobs?|hiring|vacanc\w*|openings?|careers?|positions?|recruit\w*|internships?|freshers?|walk-?in)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_job_goal(goal: str) -> bool:
+    return bool(_JOB_GOAL_RE.search(goal or ""))
 
 
 def _is_senior_for_entry_goal(record, goal: str) -> bool:
@@ -453,10 +461,11 @@ def extract_from_source(resolved_source: ResolvedSource, fields: list, goal: str
                 if isinstance(value, str) and value.startswith("/") and any(h in key.lower() for h in ("link", "url")):
                     data[key] = urljoin(result.url, value)  # make relative links absolute
             record_text = (raw.get("citation_snippet") or "") + "\n" + " ".join(str(v) for v in data.values() if v)
-            status, why = posting_status(record_text)
-            if status in ("closed", "expired"):
-                print(f"[freshness] dropped {str(data)[:70]} -> {why}")
-                continue
+            if _is_job_goal(goal):
+                status, why = posting_status(record_text)
+                if status in ("closed", "expired"):
+                    print(f"[freshness] dropped {str(data)[:70]} -> {why}")
+                    continue
             _fill_deadline_field(data, record_text)
             filled = sum(1 for f in fields if data.get(f))
             if filled < max(2, int(len(fields) * MIN_FILLED_RATIO)):

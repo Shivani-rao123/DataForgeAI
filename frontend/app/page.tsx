@@ -12,7 +12,7 @@ import { ResumeUpload } from "@/components/landing/resume-upload";
 
 export default function HomePage() {
   const [isLoading, setIsLoading] = useState(false);
-  const [mode, setMode] = useState<"resume" | "prompt">("resume");
+  const [mode, setMode] = useState<"resume" | "prompt">("prompt");
   const router = useRouter();
 
   const handleSubmit = (prompt: string) => {
