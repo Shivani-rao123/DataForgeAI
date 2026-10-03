@@ -45,7 +45,7 @@ def _search(api_key: str, attempt: dict) -> list[dict]:
     jobs: list[dict] = []
     for page in range(1, MAX_PAGES + 1):
         resp = httpx.post(
-            f"https://jooble.org/api/{api_key}",
+            f"https://{os.environ.get('JOOBLE_HOST', 'jooble.org').strip()}/api/{api_key}",
             json={**attempt, "page": str(page), "ResultOnPage": str(MAX_RESULTS)},
             timeout=30,
         )

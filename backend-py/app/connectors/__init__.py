@@ -30,8 +30,12 @@ RETRY_DELAYS = (1.5, 3.0)
 _SECRET_RE = re.compile(r"(app_key|api_key|apikey|key|token|secret|password)=[^&\s'\"]+", re.IGNORECASE)
 
 
+_PATH_KEY_RE = re.compile(r"/api/[0-9A-Za-z-]{16,}")  # Jooble puts the key in the URL path
+
+
 def _redact(text: str) -> str:
     """Error messages from httpx contain the full request URL, including API keys - hide them."""
+    text = _PATH_KEY_RE.sub("/api/***", text)
     return _SECRET_RE.sub(r"\1=***", text)
 
 

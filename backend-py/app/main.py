@@ -9,13 +9,15 @@ from dotenv import load_dotenv
 
 load_dotenv()  # must run before any agent module reads os.environ for API keys
 
-from fastapi import FastAPI, HTTPException, Query
+import asyncio
+
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from app.agents.planner import plan_workflow
 from app.agents.source_discovery import discover_sources
-from app.graph import run_workflow
+from app.resume import ResumeProfile, extract_profile, extract_text
 from app.schemas import WorkflowSpec
 from app.stream import router as stream_router
 from app.db.database import init_db
@@ -201,3 +203,15 @@ def run(req: PlanRequest):
         "extraction_results": [r.model_dump() for r in result["extraction_results"]],
         "validated_result": result["validated_result"].model_dump(),
     }
+@app.post("/api/resume/parse", response_model=ResumeProfile)
+async def parse_resume(file: UploadFile = File(...)):
+    """Reads an uploaded resume (PDF/TXT) and returns a structured candidate profile.
+    The file is processed in memory only; nothing is stored."""
+    data = await file.read()
+    try:
+        text = extract_text(file.filename or "", data)
+        return await asyncio.to_thread(extract_profile, text)
+    except ValueError as err:
+        raise HTTPException(status_code=422, detail=str(err)) from err
+    except Exception as err:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Resume parsing failed: {err}") from err

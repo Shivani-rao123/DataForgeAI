@@ -37,7 +37,10 @@ Rules:
     * provider "usajobs": US federal government jobs ONLY. Set "keywords" and "location" (US city/state). Leave "company" empty. Only use when the user is clearly asking about US government/federal jobs.
   For a job request, emit an "adzuna" connector source, a "greenhouse"/"lever" connector for EACH company the user names, and ONE "web_search" source as a fallback. Add "remoteok" or "arbeitnow" instead of/alongside "adzuna" when they fit better (remote-only, or Europe). Only add "usajobs" for explicit US federal/government job requests. For a connector source, set "query_or_url" to a short human label and fill "connector"; for all other sources set "connector" to null.
   Emit AT MOST ONE greenhouse/lever source per company — their boards are not searchable by city, so never create per-location duplicates for the same company. Put any city/region ONLY in the "adzuna" connector's "location".
-- Keep "sources" to 2-4 entries — focused, not exhaustive.
+- Keep "sources" to 2-4 entries — focused, not exhaustive. EXCEPTION: a job request that lists several roles may use up to 6 sources.
+- JOB KEYWORDS: for adzuna/jooble/arbeitnow/remoteok, "keywords" must be ONLY a job title of 1-3 words (e.g. "Java Developer"). NEVER put skills, tools, or experience words such as "fresher", "entry level" or "junior" in "keywords" - long keyword strings match nothing. Experience level and skills are applied later by a separate filter.
+- MULTIPLE ROLES: when the request lists several roles, emit one "jooble" source AND one "adzuna" source per role (max 3 roles), each with a different title in "keywords", all using the first listed city as "location".
+- For job requests always set "exclude_domains" to ["indeed.com", "instagram.com", "facebook.com", "youtube.com", "linkedin.com"] plus any the user named; these block scraping or have no job data.
 - Write "query_or_url" as a plain natural-language search query. Do NOT wrap phrases in quotes and do NOT use operators like site: or -site:.
 - Make each source target a different angle (e.g. a different city or site type) so results don't overlap.
 - "exclude_domains": bare domains (e.g. "example.com") ONLY if the user asked to avoid or exclude specific websites; otherwise an empty list [].

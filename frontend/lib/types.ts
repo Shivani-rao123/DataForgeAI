@@ -129,3 +129,14 @@ export interface TaskDetail {
   sources: { url: string; status: string; record_count: number }[];
   validated_result: ValidatedResult;
 }
+/* ── Resume upload (matches backend-py/app/resume.py) ── */
+
+export interface ResumeProfile {
+  name: string;
+  current_role: string;
+  experience: string;
+  skills: string[];
+  target_roles: string[];
+  locations: string[];
+  summary: string;
+}

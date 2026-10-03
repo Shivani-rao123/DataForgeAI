@@ -1,4 +1,4 @@
-import type { PlanResponse, RunResponse, WorkflowSpec, TaskSummary, TaskDetail } from "./types";
+import type { PlanResponse, RunResponse, WorkflowSpec, TaskSummary, TaskDetail, ResumeProfile } from "./types";
 
 // ---------------------------------------------------------------------------
 // Backend API base URL
@@ -149,4 +149,14 @@ export async function getTask(taskId: string): Promise<TaskDetail> {
   const res = await fetch(`${API_BASE}/tasks/${taskId}`);
   if (!res.ok) throw new Error(`Failed to load task: ${res.status}`);
   return (await res.json()) as TaskDetail;
+}
+export async function parseResume(file: File): Promise<ResumeProfile> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API_BASE}/resume/parse`, { method: "POST", body: form });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail || `Resume upload failed (${res.status})`);
+  }
+  return (await res.json()) as ResumeProfile;
 }
