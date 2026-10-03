@@ -336,34 +336,47 @@ function WorkflowPageInner() {
         </div>
       )}
 
-      {/* Agent status strip */}
-      <div className="px-6 py-3">
-        <AgentStatusStrip />
-      </div>
-
-      {/* Main content: Graph */}
-      <div className="flex flex-col gap-4 px-6 pb-6">
-        {loadError && (
-          <div className="text-sm text-rose bg-rose/10 border border-rose/20 rounded-lg px-4 py-3">
-            Couldn&apos;t load this workflow: {loadError}
-          </div>
+      {/* Agent status strip + pipeline graph — only while the run is in progress */}
+      <AnimatePresence>
+        {store.stage !== "complete" && (
+          <motion.div
+            key="pipeline-in-progress"
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.4 }}
+            className="overflow-hidden"
+          >
+            <div className="px-6 py-3">
+              <AgentStatusStrip />
+            </div>
+            <div className="flex flex-col gap-4 px-6 pb-6">
+              {loadError && (
+                <div className="text-sm text-rose bg-rose/10 border border-rose/20 rounded-lg px-4 py-3">
+                  Couldn&apos;t load this workflow: {loadError}
+                </div>
+              )}
+              <motion.div
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.5 }}
+                className="h-[420px]"
+              >
+                <PipelineGraph />
+              </motion.div>
+            </div>
+          </motion.div>
         )}
-        <motion.div
-          initial={{ opacity: 0, scale: 0.98 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.5 }}
-          className="h-[420px]"
-        >
-          <PipelineGraph />
-        </motion.div>
+      </AnimatePresence>
 
+      {/* Stat cards — shown once the pipeline completes */}
+      <div className="px-6">
         <AnimatePresence>
           {store.stage === "complete" && (
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 20 }}
-              className="grid grid-cols-4 gap-3 max-w-xl"
+              className="grid grid-cols-4 gap-3 max-w-xl pb-6"
             >
               <StatCard label="Records" value={store.validatedResult?.clean_records.length || 0} color="cyan" />
               <StatCard label="Real issues" value={realIssueCount} color="amber" />
